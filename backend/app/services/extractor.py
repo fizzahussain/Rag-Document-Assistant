@@ -1,14 +1,15 @@
-from abc import ABC, abstractmethod
-import csv
 import io
 import json
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, List
+from typing import Any
+
+import docx
+import fitz  # PyMuPDF
+import pandas as pd
 from bs4 import BeautifulSoup
 from pydantic import BaseModel
-import fitz  # PyMuPDF
-import docx
-import pandas as pd
+
 from backend.app.core.exceptions import ExtractionError, OCRRequiredError
 
 
@@ -23,7 +24,7 @@ class ExtractedDocument(BaseModel):
     """Container for document extraction output."""
 
     text: str
-    pages: List[ExtractedPage]
+    pages: list[ExtractedPage]
     metadata: dict[str, Any]
 
 
@@ -33,7 +34,6 @@ class BaseExtractor(ABC):
     @abstractmethod
     def extract(self, file_bytes: bytes, filename: str) -> ExtractedDocument:
         """Extracts text and page metadata from file content bytes."""
-        pass
 
 
 class PDFExtractor(BaseExtractor):
@@ -42,8 +42,8 @@ class PDFExtractor(BaseExtractor):
     def extract(self, file_bytes: bytes, filename: str) -> ExtractedDocument:
         try:
             doc = fitz.open(stream=file_bytes, filetype="pdf")
-            pages: List[ExtractedPage] = []
-            full_text_list: List[str] = []
+            pages: list[ExtractedPage] = []
+            full_text_list: list[str] = []
 
             for page_idx, page in enumerate(doc):
                 page_text = page.get_text("text").strip()
@@ -72,7 +72,9 @@ class PDFExtractor(BaseExtractor):
         except OCRRequiredError:
             raise
         except Exception as e:
-            raise ExtractionError(f"Failed to extract PDF content from '{filename}': {str(e)}")
+            raise ExtractionError(
+                f"Failed to extract PDF content from '{filename}': {e!s}"
+            )
 
 
 class DOCXExtractor(BaseExtractor):
@@ -83,14 +85,16 @@ class DOCXExtractor(BaseExtractor):
             doc_file = io.BytesIO(file_bytes)
             document = docx.Document(doc_file)
 
-            paragraphs: List[str] = []
+            paragraphs: list[str] = []
             for p in document.paragraphs:
                 if p.text.strip():
                     paragraphs.append(p.text.strip())
 
             for table in document.tables:
                 for row in table.rows:
-                    row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                    row_text = " | ".join(
+                        cell.text.strip() for cell in row.cells if cell.text.strip()
+                    )
                     if row_text:
                         paragraphs.append(row_text)
 
@@ -106,7 +110,9 @@ class DOCXExtractor(BaseExtractor):
 
             return ExtractedDocument(text=full_text, pages=pages, metadata=metadata)
         except Exception as e:
-            raise ExtractionError(f"Failed to extract DOCX content from '{filename}': {str(e)}")
+            raise ExtractionError(
+                f"Failed to extract DOCX content from '{filename}': {e!s}"
+            )
 
 
 class TextExtractor(BaseExtractor):
@@ -125,7 +131,9 @@ class TextExtractor(BaseExtractor):
 
             return ExtractedDocument(text=full_text, pages=pages, metadata=metadata)
         except Exception as e:
-            raise ExtractionError(f"Failed to extract text content from '{filename}': {str(e)}")
+            raise ExtractionError(
+                f"Failed to extract text content from '{filename}': {e!s}"
+            )
 
 
 class CSVExtractor(BaseExtractor):
@@ -139,24 +147,32 @@ class CSVExtractor(BaseExtractor):
                 content_str = file_bytes.decode("latin-1")
 
             df = pd.read_csv(io.StringIO(content_str))
-            lines: List[str] = []
-            
+            lines: list[str] = []
+
             # Convert header
             headers = [str(col) for col in df.columns]
             lines.append("Columns: " + ", ".join(headers))
-            
+
             # Format rows as text
             for idx, row in df.iterrows():
-                row_str = " | ".join(f"{col}: {val}" for col, val in row.items() if pd.notna(val))
+                row_str = " | ".join(
+                    f"{col}: {val}" for col, val in row.items() if pd.notna(val)
+                )
                 lines.append(f"Row {idx + 1}: {row_str}")
 
             full_text = "\n".join(lines)
             pages = [ExtractedPage(page_number=1, text=full_text)]
-            metadata = {"row_count": len(df), "column_count": len(df.columns), "format": "CSV"}
+            metadata = {
+                "row_count": len(df),
+                "column_count": len(df.columns),
+                "format": "CSV",
+            }
 
             return ExtractedDocument(text=full_text, pages=pages, metadata=metadata)
         except Exception as e:
-            raise ExtractionError(f"Failed to extract CSV content from '{filename}': {str(e)}")
+            raise ExtractionError(
+                f"Failed to extract CSV content from '{filename}': {e!s}"
+            )
 
 
 class HTMLExtractor(BaseExtractor):
@@ -172,16 +188,23 @@ class HTMLExtractor(BaseExtractor):
             soup = BeautifulSoup(html_str, "html.parser")
 
             # Remove scripts, styles, metadata
-            for tag in soup(["script", "style", "meta", "noscript", "header", "footer"]):
+            for tag in soup(
+                ["script", "style", "meta", "noscript", "header", "footer"]
+            ):
                 tag.decompose()
 
             full_text = soup.get_text(separator="\n", strip=True)
             pages = [ExtractedPage(page_number=1, text=full_text)]
-            metadata = {"title": soup.title.string if soup.title else "", "format": "HTML"}
+            metadata = {
+                "title": soup.title.string if soup.title else "",
+                "format": "HTML",
+            }
 
             return ExtractedDocument(text=full_text, pages=pages, metadata=metadata)
         except Exception as e:
-            raise ExtractionError(f"Failed to extract HTML content from '{filename}': {str(e)}")
+            raise ExtractionError(
+                f"Failed to extract HTML content from '{filename}': {e!s}"
+            )
 
 
 class JSONExtractor(BaseExtractor):
@@ -201,7 +224,9 @@ class JSONExtractor(BaseExtractor):
 
             return ExtractedDocument(text=full_text, pages=pages, metadata=metadata)
         except Exception as e:
-            raise ExtractionError(f"Failed to extract JSON content from '{filename}': {str(e)}")
+            raise ExtractionError(
+                f"Failed to extract JSON content from '{filename}': {e!s}"
+            )
 
 
 class ExtractorFactory:
@@ -223,4 +248,6 @@ class ExtractorFactory:
         elif ext == "json":
             return JSONExtractor()
         else:
-            raise ExtractionError(f"No extractor registered for file extension '.{ext}'")
+            raise ExtractionError(
+                f"No extractor registered for file extension '.{ext}'"
+            )

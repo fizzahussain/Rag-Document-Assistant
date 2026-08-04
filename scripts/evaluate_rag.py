@@ -2,12 +2,13 @@ import asyncio
 import json
 import os
 import uuid
+
 from backend.app.services.chunker import TextChunker
 from backend.app.services.embedder import MockEmbeddingProvider
 from backend.app.services.extractor import ExtractedDocument, ExtractedPage
 from backend.app.services.llm import MockLLMProvider
 from backend.app.services.qdrant import QdrantService
-from backend.app.services.retrieval import RetrievalService, RetrievedSource
+from backend.app.services.retrieval import RetrievalService
 
 
 async def run_evaluation():
@@ -41,11 +42,12 @@ async def run_evaluation():
 
     chunker = TextChunker(chunk_size=300, chunk_overlap=30)
     chunks = chunker.chunk_document(doc)
-    
+
     texts = [c.text for c in chunks]
     vectors = await embedder.embed_texts(texts)
 
     from qdrant_client.http import models as rest_models
+
     points = []
     for c, v in zip(chunks, vectors):
         points.append(
@@ -86,7 +88,7 @@ async def run_evaluation():
         print(f"Citations Count: {len(answer_obj.citations)}")
 
     hit_rate = (hits / total_evals) * 100
-    print(f"\n--- Final Metric Summary ---")
+    print("\n--- Final Metric Summary ---")
     print(f"Total Queries Evaluated: {total_evals}")
     print(f"Retrieval Hit Rate: {hit_rate:.1f}%")
     print("---------------------------------------------")

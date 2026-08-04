@@ -1,9 +1,10 @@
 import hashlib
 import re
-from typing import List, Optional
 import uuid
+
 from pydantic import BaseModel
-from backend.app.services.extractor import ExtractedDocument, ExtractedPage
+
+from backend.app.services.extractor import ExtractedDocument
 
 
 class ChunkPayload(BaseModel):
@@ -11,7 +12,7 @@ class ChunkPayload(BaseModel):
 
     chunk_id: uuid.UUID
     chunk_index: int
-    page_number: Optional[int]
+    page_number: int | None
     text: str
     chunk_hash: str
 
@@ -36,9 +37,9 @@ class TextChunker:
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
-    def chunk_document(self, doc: ExtractedDocument) -> List[ChunkPayload]:
+    def chunk_document(self, doc: ExtractedDocument) -> list[ChunkPayload]:
         """Splits an extracted document into structured chunks with page numbers."""
-        chunks: List[ChunkPayload] = []
+        chunks: list[ChunkPayload] = []
         global_chunk_idx = 0
 
         # Process page by page to maintain accurate page numbers
@@ -63,7 +64,7 @@ class TextChunker:
 
         return chunks
 
-    def _split_text(self, text: str) -> List[str]:
+    def _split_text(self, text: str) -> list[str]:
         """Recursively splits text using separators [\n\n, \n, . , space, ""] with overlap."""
         if len(text) <= self.chunk_size:
             return [text]
@@ -71,8 +72,8 @@ class TextChunker:
         separators = ["\n\n", "\n", ". ", " ", ""]
         return self._recursive_split(text, separators)
 
-    def _recursive_split(self, text: str, separators: List[str]) -> List[str]:
-        final_chunks: List[str] = []
+    def _recursive_split(self, text: str, separators: list[str]) -> list[str]:
+        final_chunks: list[str] = []
         if not text.strip():
             return final_chunks
 
@@ -82,7 +83,7 @@ class TextChunker:
         sep = separators[0]
         splits = text.split(sep) if sep else list(text)
 
-        current_chunk: List[str] = []
+        current_chunk: list[str] = []
         current_len = 0
 
         for split in splits:
@@ -92,11 +93,11 @@ class TextChunker:
                     joined = sep.join(current_chunk).strip()
                     if joined:
                         final_chunks.append(joined)
-                
+
                 # Apply sliding window overlap
                 if self.chunk_overlap > 0 and current_chunk:
                     overlap_len = 0
-                    overlap_items: List[str] = []
+                    overlap_items: list[str] = []
                     for item in reversed(current_chunk):
                         if overlap_len + len(item) <= self.chunk_overlap:
                             overlap_items.insert(0, item)

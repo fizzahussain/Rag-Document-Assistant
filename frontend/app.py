@@ -1,5 +1,6 @@
 import os
 import uuid
+
 import gradio as gr
 import httpx
 
@@ -27,17 +28,21 @@ def upload_file_action(user_id_str: str, file):
         files = {"file": (filename, file_bytes, "application/octet-stream")}
         data = {"user_id": user_id_str}
 
-        response = httpx.post(f"{BACKEND_URL}/documents/upload", files=files, data=data, timeout=60.0)
+        response = httpx.post(
+            f"{BACKEND_URL}/documents/upload", files=files, data=data, timeout=60.0
+        )
 
         if response.status_code in (200, 201):
             doc = response.json()
-            status_msg = f"Successfully uploaded '{doc['filename']}'. Status: {doc['status']}."
+            status_msg = (
+                f"Successfully uploaded '{doc['filename']}'. Status: {doc['status']}."
+            )
             return status_msg, refresh_documents_action(user_id_str)[0]
         else:
             err = response.json()
             return f"Upload failed: {err.get('message', response.text)}", gr.update()
     except Exception as e:
-        return f"Error connecting to backend: {str(e)}", gr.update()
+        return f"Error connecting to backend: {e!s}", gr.update()
 
 
 def refresh_documents_action(user_id_str: str):
@@ -45,13 +50,23 @@ def refresh_documents_action(user_id_str: str):
         return [], []
 
     try:
-        response = httpx.get(f"{BACKEND_URL}/documents", params={"user_id": user_id_str}, timeout=10.0)
+        response = httpx.get(
+            f"{BACKEND_URL}/documents", params={"user_id": user_id_str}, timeout=10.0
+        )
         if response.status_code == 200:
             docs = response.json()
             table_data = []
             doc_choices = []
             for d in docs:
-                table_data.append([d["id"], d["filename"], d["status"], f"{d['file_size'] / 1024:.1f} KB", d["updated_at"]])
+                table_data.append(
+                    [
+                        d["id"],
+                        d["filename"],
+                        d["status"],
+                        f"{d['file_size'] / 1024:.1f} KB",
+                        d["updated_at"],
+                    ]
+                )
                 doc_choices.append((f"{d['filename']} ({d['status']})", d["id"]))
             return table_data, gr.update(choices=doc_choices)
         return [], gr.update(choices=[])
@@ -63,15 +78,21 @@ def delete_document_action(user_id_str: str, doc_id: str):
     if not doc_id:
         return "Please select a document ID to delete."
     try:
-        response = httpx.delete(f"{BACKEND_URL}/documents/{doc_id}", params={"user_id": user_id_str}, timeout=10.0)
+        response = httpx.delete(
+            f"{BACKEND_URL}/documents/{doc_id}",
+            params={"user_id": user_id_str},
+            timeout=10.0,
+        )
         if response.status_code in (200, 204):
             return f"Document '{doc_id}' deleted successfully."
         return f"Delete failed: {response.text}"
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error: {e!s}"
 
 
-def chat_action(user_id_str: str, message: str, history, selected_docs, conversation_id_str: str):
+def chat_action(
+    user_id_str: str, message: str, history, selected_docs, conversation_id_str: str
+):
     if not message.strip():
         return history, "", "", conversation_id_str
 
@@ -90,7 +111,9 @@ def chat_action(user_id_str: str, message: str, history, selected_docs, conversa
         payload["conversation_id"] = conversation_id_str
 
     try:
-        response = httpx.post(f"{BACKEND_URL}/chat", json=payload, headers=get_headers(), timeout=60.0)
+        response = httpx.post(
+            f"{BACKEND_URL}/chat", json=payload, headers=get_headers(), timeout=60.0
+        )
         if response.status_code == 200:
             res = response.json()
             conv_id = res["conversation_id"]
@@ -100,10 +123,20 @@ def chat_action(user_id_str: str, message: str, history, selected_docs, conversa
             # Format source citations display
             source_text_list = []
             for s in sources:
-                page_info = f"page {s['page_number']}" if s.get("page_number") else f"chunk {s.get('chunk_index', 0)}"
-                source_text_list.append(f"**[{s['filename']} - {page_info}]** (Score: {s['score']:.3f})\n> {s['text']}")
-            
-            sources_formatted = "\n\n---\n\n".join(source_text_list) if source_text_list else "No relevant context sources retrieved."
+                page_info = (
+                    f"page {s['page_number']}"
+                    if s.get("page_number")
+                    else f"chunk {s.get('chunk_index', 0)}"
+                )
+                source_text_list.append(
+                    f"**[{s['filename']} - {page_info}]** (Score: {s['score']:.3f})\n> {s['text']}"
+                )
+
+            sources_formatted = (
+                "\n\n---\n\n".join(source_text_list)
+                if source_text_list
+                else "No relevant context sources retrieved."
+            )
 
             history.append((message, answer))
             return history, "", sources_formatted, conv_id
@@ -113,8 +146,8 @@ def chat_action(user_id_str: str, message: str, history, selected_docs, conversa
             history.append((message, f"Error: {err_msg}"))
             return history, "", "Error generating answer.", conversation_id_str
     except Exception as e:
-        history.append((message, f"Connection error: {str(e)}"))
-        return history, "", f"Failed to reach backend: {str(e)}", conversation_id_str
+        history.append((message, f"Connection error: {e!s}"))
+        return history, "", f"Failed to reach backend: {e!s}", conversation_id_str
 
 
 def build_ui():
@@ -142,7 +175,15 @@ def build_ui():
                 with gr.Row():
                     file_input = gr.File(
                         label="Select Document (PDF, DOCX, TXT, MD, CSV, HTML, JSON)",
-                        file_types=[".pdf", ".docx", ".txt", ".md", ".csv", ".html", ".json"],
+                        file_types=[
+                            ".pdf",
+                            ".docx",
+                            ".txt",
+                            ".md",
+                            ".csv",
+                            ".html",
+                            ".json",
+                        ],
                     )
                     upload_btn = gr.Button("Upload & Ingest", variant="primary")
 
@@ -156,29 +197,30 @@ def build_ui():
                 )
 
                 with gr.Row():
-                    delete_doc_id_input = gr.Textbox(label="Document ID to Delete", placeholder="Paste Document UUID")
+                    delete_doc_id_input = gr.Textbox(
+                        label="Document ID to Delete", placeholder="Paste Document UUID"
+                    )
                     delete_doc_btn = gr.Button("Delete Document", variant="stop")
                 delete_status_output = gr.Markdown()
 
-            with gr.TabItem("RAG Chat & Assistant"):
-                with gr.Row():
-                    with gr.Column(scale=3):
-                        chatbot = gr.Chatbot(label="Conversation", height=500)
-                        msg_input = gr.Textbox(
-                            label="Ask a question about your documents...",
-                            placeholder="e.g. What are the key findings in the report?",
-                            lines=2,
-                        )
-                        with gr.Row():
-                            send_btn = gr.Button("Send Question", variant="primary")
-                            clear_chat_btn = gr.Button("Clear Session")
+            with gr.TabItem("RAG Chat & Assistant"), gr.Row():
+                with gr.Column(scale=3):
+                    chatbot = gr.Chatbot(label="Conversation", height=500)
+                    msg_input = gr.Textbox(
+                        label="Ask a question about your documents...",
+                        placeholder="e.g. What are the key findings in the report?",
+                        lines=2,
+                    )
+                    with gr.Row():
+                        send_btn = gr.Button("Send Question", variant="primary")
+                        clear_chat_btn = gr.Button("Clear Session")
 
-                    with gr.Column(scale=2):
-                        selected_docs_checkbox = gr.CheckboxGroup(
-                            label="Filter Search by Documents (Optional)",
-                            choices=[],
-                        )
-                        sources_output = gr.Markdown(label="Retrieved Context & Citations")
+                with gr.Column(scale=2):
+                    selected_docs_checkbox = gr.CheckboxGroup(
+                        label="Filter Search by Documents (Optional)",
+                        choices=[],
+                    )
+                    sources_output = gr.Markdown(label="Retrieved Context & Citations")
 
         # Callbacks
         upload_btn.click(
@@ -201,7 +243,13 @@ def build_ui():
 
         send_btn.click(
             fn=chat_action,
-            inputs=[user_id_input, msg_input, chatbot, selected_docs_checkbox, conversation_id_state],
+            inputs=[
+                user_id_input,
+                msg_input,
+                chatbot,
+                selected_docs_checkbox,
+                conversation_id_state,
+            ],
             outputs=[chatbot, msg_input, sources_output, conversation_id_state],
         )
 

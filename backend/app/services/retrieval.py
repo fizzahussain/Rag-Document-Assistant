@@ -1,6 +1,11 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel
-from backend.app.services.embedder import BaseEmbeddingProvider, EmbeddingProviderFactory
+
+from backend.app.services.embedder import (
+    BaseEmbeddingProvider,
+    EmbeddingProviderFactory,
+)
 from backend.app.services.qdrant import QdrantService
 
 
@@ -10,7 +15,7 @@ class RetrievedSource(BaseModel):
     document_id: str
     chunk_id: str
     filename: str
-    page_number: Optional[int]
+    page_number: int | None
     chunk_index: int
     score: float
     text: str
@@ -21,8 +26,8 @@ class RetrievalService:
 
     def __init__(
         self,
-        qdrant_service: Optional[QdrantService] = None,
-        embedder: Optional[BaseEmbeddingProvider] = None,
+        qdrant_service: QdrantService | None = None,
+        embedder: BaseEmbeddingProvider | None = None,
     ):
         self.qdrant_service = qdrant_service or QdrantService()
         self.embedder = embedder or EmbeddingProviderFactory.get_provider()
@@ -32,10 +37,10 @@ class RetrievalService:
         query: str,
         user_id: str,
         limit: int = 5,
-        score_threshold: Optional[float] = None,
-        document_ids: Optional[List[str]] = None,
-        workspace_id: Optional[str] = None,
-    ) -> List[RetrievedSource]:
+        score_threshold: float | None = None,
+        document_ids: list[str] | None = None,
+        workspace_id: str | None = None,
+    ) -> list[RetrievedSource]:
         """Performs dense vector retrieval for a query and formats attribution references."""
         if not query.strip():
             return []
@@ -54,13 +59,13 @@ class RetrievalService:
         )
 
         # 3. Deduplicate results based on text content
-        sources: List[RetrievedSource] = []
+        sources: list[RetrievedSource] = []
         seen_texts = set()
 
         for point in scored_points:
-            payload: Dict[str, Any] = point.payload or {}
+            payload: dict[str, Any] = point.payload or {}
             text_content = payload.get("text", "")
-            
+
             if text_content in seen_texts:
                 continue
             seen_texts.add(text_content)

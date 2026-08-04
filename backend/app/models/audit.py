@@ -1,7 +1,9 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from backend.app.models.base import Base
 
 
@@ -20,11 +22,13 @@ class AuditLog(Base):
         index=True,
     )
     action: Mapped[str] = mapped_column(String(100), nullable=False)
-    status: Mapped[str] = mapped_column(String(50), nullable=False)  # success, failure, pending
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # success, failure, pending
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     document = relationship("Document")

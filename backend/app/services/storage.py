@@ -1,7 +1,8 @@
-import os
-from pathlib import Path
 import uuid
+from pathlib import Path
+
 import anyio
+
 from backend.app.config import settings
 from backend.app.core.exceptions import StorageError
 from backend.app.core.security import sanitize_filename, verify_path_traversal
@@ -27,7 +28,9 @@ class StorageService:
         if path.exists():
             path.unlink()
 
-    async def save_file_async(self, user_id: str, original_filename: str, content: bytes) -> str:
+    async def save_file_async(
+        self, user_id: str, original_filename: str, content: bytes
+    ) -> str:
         """Saves file content asynchronously using thread pool for non-blocking I/O."""
         user_dir = self.base_dir / str(user_id)
         user_dir.mkdir(parents=True, exist_ok=True)
@@ -42,7 +45,7 @@ class StorageService:
             await anyio.to_thread.run_sync(self._sync_write, target_path, content)
             return target_path
         except Exception as e:
-            raise StorageError(f"Failed to save file to storage: {str(e)}")
+            raise StorageError(f"Failed to save file to storage: {e!s}")
 
     def save_file(self, user_id: str, original_filename: str, content: bytes) -> str:
         """Saves file content synchronously to a user-isolated folder."""
@@ -59,7 +62,7 @@ class StorageService:
             self._sync_write(target_path, content)
             return target_path
         except Exception as e:
-            raise StorageError(f"Failed to save file to storage: {str(e)}")
+            raise StorageError(f"Failed to save file to storage: {e!s}")
 
     def delete_file(self, file_path: str) -> None:
         """Deletes a stored file if it exists."""
@@ -69,7 +72,7 @@ class StorageService:
         try:
             self._sync_delete(file_path)
         except Exception as e:
-            raise StorageError(f"Failed to delete file '{file_path}': {str(e)}")
+            raise StorageError(f"Failed to delete file '{file_path}': {e!s}")
 
     def read_file(self, file_path: str) -> bytes:
         """Reads file bytes from storage safely."""
@@ -80,4 +83,4 @@ class StorageService:
         try:
             return self._sync_read(file_path)
         except Exception as e:
-            raise StorageError(f"Failed to read file from storage: {str(e)}")
+            raise StorageError(f"Failed to read file from storage: {e!s}")

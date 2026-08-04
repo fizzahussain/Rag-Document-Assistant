@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from backend.app.database import get_db
 from backend.app.schemas.common import HealthResponse
 from backend.app.services.qdrant import QdrantService

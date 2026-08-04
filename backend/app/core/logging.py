@@ -1,7 +1,8 @@
 import logging
 import sys
-from typing import Any, Dict
+
 import structlog
+
 from backend.app.config import settings
 
 
@@ -39,7 +40,12 @@ def setup_logging() -> None:
     )
 
     # Intercept third-party logs (e.g. uvicorn, sqlalchemy)
-    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access", "sqlalchemy.engine"):
+    for logger_name in (
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+        "sqlalchemy.engine",
+    ):
         logger = logging.getLogger(logger_name)
         logger.handlers = []
         logger.propagate = True

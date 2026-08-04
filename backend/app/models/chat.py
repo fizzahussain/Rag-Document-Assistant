@@ -1,7 +1,9 @@
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, Uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from backend.app.models.base import Base
 
 
@@ -22,7 +24,7 @@ class Conversation(Base):
     title: Mapped[str] = mapped_column(String(255), default="New Conversation")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     user = relationship("User")
@@ -45,12 +47,14 @@ class Message(Base):
         nullable=False,
         index=True,
     )
-    role: Mapped[str] = mapped_column(String(50), nullable=False)  # user, assistant, system
+    role: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # user, assistant, system
     content: Mapped[str] = mapped_column(Text, nullable=False)
     retrieved_sources: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     conversation = relationship("Conversation", back_populates="messages")

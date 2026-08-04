@@ -1,5 +1,5 @@
 import json
-from typing import List, Union
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,11 +14,14 @@ class Settings(BaseSettings):
     # API Server Configuration
     BACKEND_HOST: str = "0.0.0.0"
     BACKEND_PORT: int = 8000
-    ALLOWED_ORIGINS: Union[str, List[str]] = ["http://localhost:7860", "http://127.0.0.1:7860"]
+    ALLOWED_ORIGINS: str | list[str] = [
+        "http://localhost:7860",
+        "http://127.0.0.1:7860",
+    ]
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
-    def parse_allowed_origins(cls, value: Union[str, List[str]]) -> List[str]:
+    def parse_allowed_origins(cls, value: str | list[str]) -> list[str]:
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
@@ -34,7 +37,9 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "rag_db"
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres_password@localhost:5432/rag_db"
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://postgres:postgres_password@localhost:5432/rag_db"
+    )
 
     # Vector Database Configuration (Qdrant)
     QDRANT_HOST: str = "localhost"
@@ -45,11 +50,19 @@ class Settings(BaseSettings):
     # File Ingestion & Security Configurations
     UPLOAD_DIR: str = "./data/uploads"
     MAX_UPLOAD_SIZE_MB: int = 10
-    ALLOWED_EXTENSIONS: Union[str, List[str]] = ["pdf", "docx", "txt", "md", "csv", "html", "json"]
+    ALLOWED_EXTENSIONS: str | list[str] = [
+        "pdf",
+        "docx",
+        "txt",
+        "md",
+        "csv",
+        "html",
+        "json",
+    ]
 
     @field_validator("ALLOWED_EXTENSIONS", mode="before")
     @classmethod
-    def parse_allowed_extensions(cls, value: Union[str, List[str]]) -> List[str]:
+    def parse_allowed_extensions(cls, value: str | list[str]) -> list[str]:
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)

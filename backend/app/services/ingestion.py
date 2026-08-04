@@ -1,14 +1,14 @@
 import uuid
-from typing import List, Optional
+
 from qdrant_client.http import models as rest_models
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from backend.app.config import settings
 from backend.app.core.exceptions import (
     ExtractionError,
     NotFoundError,
     OCRRequiredError,
-    ValidationError,
 )
 from backend.app.core.logging import logger
 from backend.app.models.audit import AuditLog
@@ -26,8 +26,8 @@ class IngestionService:
     def __init__(
         self,
         db: AsyncSession,
-        storage_service: Optional[StorageService] = None,
-        qdrant_service: Optional[QdrantService] = None,
+        storage_service: StorageService | None = None,
+        qdrant_service: QdrantService | None = None,
     ):
         self.db = db
         self.storage = storage_service or StorageService()
@@ -35,7 +35,13 @@ class IngestionService:
         self.chunker = TextChunker()
         self.embedder = EmbeddingProviderFactory.get_provider()
 
-    async def log_audit(self, document_id: Optional[uuid.UUID], action: str, status: str, error_message: Optional[str] = None) -> None:
+    async def log_audit(
+        self,
+        document_id: uuid.UUID | None,
+        action: str,
+        status: str,
+        error_message: str | None = None,
+    ) -> None:
         """Records an audit trail event."""
         log_entry = AuditLog(
             document_id=document_id,
@@ -49,7 +55,9 @@ class IngestionService:
     async def process_document(self, document_id: uuid.UUID) -> Document:
         """Executes the full idempotent ingestion pipeline for a document."""
         # 1. Fetch document
-        result = await self.db.execute(select(Document).where(Document.id == document_id))
+        result = await self.db.execute(
+            select(Document).where(Document.id == document_id)
+        )
         doc = result.scalar_one_or_none()
         if not doc:
             raise NotFoundError(f"Document '{document_id}' not found.")
@@ -90,8 +98,8 @@ class IngestionService:
             doc.status = "indexing"
             await self.db.commit()
 
-            db_chunks: List[DocumentChunk] = []
-            qdrant_points: List[rest_models.PointStruct] = []
+            db_chunks: list[DocumentChunk] = []
+            qdrant_points: list[rest_models.PointStruct] = []
 
             for payload, vector in zip(chunk_payloads, embeddings):
                 chunk_uuid = payload.chunk_id
@@ -136,27 +144,43 @@ class IngestionService:
             await self.db.commit()
 
             await self.log_audit(doc.id, action="ingest", status="success")
-            logger.info("Successfully ingested document", document_id=str(doc.id), filename=doc.filename)
+            logger.info(
+                "Successfully ingested document",
+                document_id=str(doc.id),
+                filename=doc.filename,
+            )
             return doc
 
         except OCRRequiredError as e:
             doc.status = "failed"
             await self.db.commit()
-            await self.log_audit(doc.id, action="ingest", status="failed", error_message=str(e))
-            logger.warning("Document requires OCR", document_id=str(doc.id), error=str(e))
+            await self.log_audit(
+                doc.id, action="ingest", status="failed", error_message=str(e)
+            )
+            logger.warning(
+                "Document requires OCR", document_id=str(doc.id), error=str(e)
+            )
             raise
 
         except Exception as e:
             doc.status = "failed"
             await self.db.commit()
-            await self.log_audit(doc.id, action="ingest", status="failed", error_message=str(e))
-            logger.error("Failed to ingest document", document_id=str(doc.id), error=str(e))
-            raise ExtractionError(f"Ingestion failed for document '{doc.filename}': {str(e)}")
+            await self.log_audit(
+                doc.id, action="ingest", status="failed", error_message=str(e)
+            )
+            logger.error(
+                "Failed to ingest document", document_id=str(doc.id), error=str(e)
+            )
+            raise ExtractionError(
+                f"Ingestion failed for document '{doc.filename}': {e!s}"
+            )
 
     async def delete_document(self, document_id: uuid.UUID, user_id: uuid.UUID) -> None:
         """Deletes document record, chunk records, stored file, and Qdrant points."""
         result = await self.db.execute(
-            select(Document).where(Document.id == document_id, Document.user_id == user_id)
+            select(Document).where(
+                Document.id == document_id, Document.user_id == user_id
+            )
         )
         doc = result.scalar_one_or_none()
         if not doc:
@@ -177,4 +201,6 @@ class IngestionService:
         await self.db.commit()
 
         await self.log_audit(document_id, action="delete", status="success")
-        logger.info("Deleted document and all related records", document_id=str(document_id))
+        logger.info(
+            "Deleted document and all related records", document_id=str(document_id)
+        )

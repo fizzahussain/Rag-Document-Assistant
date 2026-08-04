@@ -1,6 +1,8 @@
 import uuid
+
 import pytest
 from qdrant_client.http import models as rest_models
+
 from backend.app.services.embedder import MockEmbeddingProvider
 from backend.app.services.qdrant import QdrantService
 from backend.app.services.retrieval import RetrievalService
@@ -35,7 +37,9 @@ async def test_qdrant_in_memory_search():
     )
     await qdrant_service.upsert_points([point])
 
-    retrieval_service = RetrievalService(qdrant_service=qdrant_service, embedder=embedder)
+    retrieval_service = RetrievalService(
+        qdrant_service=qdrant_service, embedder=embedder
+    )
 
     # Perform search matching user_id
     results = await retrieval_service.search(
