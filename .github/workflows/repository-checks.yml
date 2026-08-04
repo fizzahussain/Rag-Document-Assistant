@@ -1,0 +1,54 @@
+name: Repository Hygiene Checks
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene-check:
+    name: Validate Repository Files & Syntax
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check Required Files Existence
+        run: |
+          for file in README.md .gitignore .env.example LICENSE CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md CHANGELOG.md; do
+            if [ ! -f "$file" ]; then
+              echo "Error: Required file $file is missing!"
+              exit 1
+            fi
+          done
+          echo "All required governance files exist."
+
+      - name: Detect Accidentally Committed Secrets & Keys
+        run: |
+          if [ -f ".env" ]; then
+            echo "Error: .env file detected in commit! Remove it immediately."
+            exit 1
+          fi
+          
+          FOUND_KEYS=$(find . -maxdepth 3 -type f \( -name "*.pem" -o -name "*.key" -o -name "*.id_rsa" \) ! -path "./.git/*")
+          if [ -n "$FOUND_KEYS" ]; then
+            echo "Error: Private key files detected: $FOUND_KEYS"
+            exit 1
+          fi
+          echo "No committed secrets or private key files detected."
+
+      - name: Validate YAML Syntax
+        run: |
+          python -c "
+          import glob, yaml
+          for filename in glob.glob('**/*.yml', recursive=True) + glob.glob('**/*.yaml', recursive=True):
+              with open(filename, 'r') as f:
+                  yaml.safe_load(f)
+              print(f'Valid YAML: {filename}')
+          "
