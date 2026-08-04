@@ -1,6 +1,7 @@
-import pytest
 import fitz
-from backend.app.core.exceptions import OCRRequiredError, ValidationError
+import pytest
+
+from backend.app.core.exceptions import OCRRequiredError
 from backend.app.services.extractor import (
     CSVExtractor,
     ExtractorFactory,
@@ -13,7 +14,7 @@ from backend.app.services.extractor import (
 
 def test_text_extractor():
     extractor = TextExtractor()
-    content = "Hello world\nThis is a test document.".encode("utf-8")
+    content = b"Hello world\nThis is a test document."
     result = extractor.extract(content, "test.txt")
     assert "Hello world" in result.text
     assert len(result.pages) == 1
@@ -21,14 +22,14 @@ def test_text_extractor():
 
 def test_json_extractor():
     extractor = JSONExtractor()
-    content = '{"name": "RAG System", "version": 1.0}'.encode("utf-8")
+    content = b'{"name": "RAG System", "version": 1.0}'
     result = extractor.extract(content, "data.json")
     assert "RAG System" in result.text
 
 
 def test_html_extractor():
     extractor = HTMLExtractor()
-    content = "<html><head><title>Test</title></head><body><h1>Header</h1><p>Paragraph text</p></body></html>".encode("utf-8")
+    content = b"<html><head><title>Test</title></head><body><h1>Header</h1><p>Paragraph text</p></body></html>"
     result = extractor.extract(content, "page.html")
     assert "Header" in result.text
     assert "Paragraph text" in result.text
@@ -37,7 +38,7 @@ def test_html_extractor():
 
 def test_csv_extractor():
     extractor = CSVExtractor()
-    content = "name,age\nAlice,30\nBob,25".encode("utf-8")
+    content = b"name,age\nAlice,30\nBob,25"
     result = extractor.extract(content, "data.csv")
     assert "Alice" in result.text
     assert "Columns: name, age" in result.text

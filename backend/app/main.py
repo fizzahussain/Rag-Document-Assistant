@@ -1,8 +1,10 @@
 import uuid
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
+
 from backend.app.api.router import api_router
 from backend.app.config import settings
 from backend.app.core.exceptions import RAGException
@@ -49,8 +51,13 @@ async def add_request_id(request: Request, call_next):
 @app.exception_handler(RAGException)
 async def rag_exception_handler(request: Request, exc: RAGException):
     request_id = getattr(request.state, "request_id", None)
-    logger.warning("Application exception", error_code=exc.error_code, message=exc.message, request_id=request_id)
-    
+    logger.warning(
+        "Application exception",
+        error_code=exc.error_code,
+        message=exc.message,
+        request_id=request_id,
+    )
+
     status_code = status.HTTP_400_BAD_REQUEST
     if exc.error_code == "NOT_FOUND":
         status_code = status.HTTP_404_NOT_FOUND
@@ -71,7 +78,12 @@ async def rag_exception_handler(request: Request, exc: RAGException):
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", None)
-    logger.error("Unhandled server exception", error=str(exc), request_id=request_id, exc_info=True)
+    logger.error(
+        "Unhandled server exception",
+        error=str(exc),
+        request_id=request_id,
+        exc_info=True,
+    )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={

@@ -1,4 +1,5 @@
 import pytest
+
 from backend.app.services.chunker import TextChunker
 from backend.app.services.embedder import (
     EmbeddingProviderFactory,
@@ -36,7 +37,7 @@ async def test_mock_embedder():
     embedder = MockEmbeddingProvider(dimension=128)
     texts = ["chunk 1 text", "chunk 2 text"]
     embeddings = await embedder.embed_texts(texts)
-    
+
     assert len(embeddings) == 2
     assert len(embeddings[0]) == 128
     # Test vector normalization (length close to 1.0)

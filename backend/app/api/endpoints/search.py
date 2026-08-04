@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+
 from backend.app.schemas.search import SearchRequest, SearchResponse
 from backend.app.services.retrieval import RetrievalService
 
@@ -10,7 +11,9 @@ async def search_documents(request: SearchRequest) -> SearchResponse:
     """Executes dense vector search across user documents."""
     retrieval_service = RetrievalService()
 
-    doc_ids_str = [str(d) for d in request.document_ids] if request.document_ids else None
+    doc_ids_str = (
+        [str(d) for d in request.document_ids] if request.document_ids else None
+    )
 
     results = await retrieval_service.search(
         query=request.query,

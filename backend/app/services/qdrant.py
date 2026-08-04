@@ -1,7 +1,8 @@
-from typing import Any, List, Optional
-import uuid
+from typing import Any
+
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as rest_models
+
 from backend.app.config import settings
 from backend.app.core.exceptions import VectorDBError
 from backend.app.core.logging import logger
@@ -10,7 +11,12 @@ from backend.app.core.logging import logger
 class QdrantService:
     """Manages collection management, point indexing, and vector searching in Qdrant."""
 
-    def __init__(self, host: str = settings.QDRANT_HOST, port: int = settings.QDRANT_PORT, in_memory: bool = False):
+    def __init__(
+        self,
+        host: str = settings.QDRANT_HOST,
+        port: int = settings.QDRANT_PORT,
+        in_memory: bool = False,
+    ):
         if in_memory or host == ":memory:":
             self.client = AsyncQdrantClient(":memory:")
         else:
@@ -37,11 +43,18 @@ class QdrantService:
                         distance=rest_models.Distance.COSINE,
                     ),
                 )
-                logger.info("Created Qdrant collection", collection=self.collection_name, size=self.dimension)
+                logger.info(
+                    "Created Qdrant collection",
+                    collection=self.collection_name,
+                    size=self.dimension,
+                )
         except Exception as e:
-            logger.warning("Failed to check/create Qdrant collection, falling back to memory mode", error=str(e))
+            logger.warning(
+                "Failed to check/create Qdrant collection, falling back to memory mode",
+                error=str(e),
+            )
 
-    async def upsert_points(self, points: List[rest_models.PointStruct]) -> None:
+    async def upsert_points(self, points: list[rest_models.PointStruct]) -> None:
         """Upserts a batch of chunk vectors and payload points into Qdrant."""
         if not points:
             return
@@ -52,22 +65,22 @@ class QdrantService:
                 points=points,
             )
         except Exception as e:
-            raise VectorDBError(f"Failed to upsert vector points into Qdrant: {str(e)}")
+            raise VectorDBError(f"Failed to upsert vector points into Qdrant: {e!s}")
 
     async def search_points(
         self,
-        query_vector: List[float],
+        query_vector: list[float],
         user_id: str,
         limit: int = 5,
-        score_threshold: Optional[float] = None,
-        document_ids: Optional[List[str]] = None,
-        workspace_id: Optional[str] = None,
-    ) -> List[rest_models.ScoredPoint]:
+        score_threshold: float | None = None,
+        document_ids: list[str] | None = None,
+        workspace_id: str | None = None,
+    ) -> list[rest_models.ScoredPoint]:
         """Executes vector search with strict payload filters."""
         try:
             await self.init_collection()
 
-            must_filters: List[Any] = [
+            must_filters: list[Any] = [
                 rest_models.FieldCondition(
                     key="user_id",
                     match=rest_models.MatchValue(value=str(user_id)),
@@ -86,7 +99,9 @@ class QdrantService:
                 must_filters.append(
                     rest_models.FieldCondition(
                         key="document_id",
-                        match=rest_models.MatchAny(any=[str(doc_id) for doc_id in document_ids]),
+                        match=rest_models.MatchAny(
+                            any=[str(doc_id) for doc_id in document_ids]
+                        ),
                     )
                 )
 
@@ -101,7 +116,7 @@ class QdrantService:
             )
             return res.points
         except Exception as e:
-            raise VectorDBError(f"Failed to perform vector search in Qdrant: {str(e)}")
+            raise VectorDBError(f"Failed to perform vector search in Qdrant: {e!s}")
 
     async def delete_document_points(self, document_id: str, user_id: str) -> None:
         """Deletes all points matching document_id and user_id."""
@@ -124,4 +139,6 @@ class QdrantService:
                 points_selector=rest_models.FilterSelector(filter=filter_condition),
             )
         except Exception as e:
-            raise VectorDBError(f"Failed to delete points for document '{document_id}': {str(e)}")
+            raise VectorDBError(
+                f"Failed to delete points for document '{document_id}': {e!s}"
+            )

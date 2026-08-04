@@ -1,12 +1,14 @@
 import uuid
+
 import pytest
+from qdrant_client.http import models as rest_models
+
 from backend.app.services.chunker import TextChunker
 from backend.app.services.embedder import MockEmbeddingProvider
 from backend.app.services.extractor import ExtractedDocument, ExtractedPage
 from backend.app.services.llm import MockLLMProvider
 from backend.app.services.qdrant import QdrantService
 from backend.app.services.retrieval import RetrievalService
-from qdrant_client.http import models as rest_models
 
 
 @pytest.mark.asyncio
@@ -67,5 +69,7 @@ async def test_end_to_end_rag_flow():
 
     # 6. Delete Document Vectors & Verify Clean Purge
     await qdrant.delete_document_points(doc_id, user_id)
-    cleared_results = await retrieval.search(query="What is FastAPI?", user_id=user_id, limit=3)
+    cleared_results = await retrieval.search(
+        query="What is FastAPI?", user_id=user_id, limit=3
+    )
     assert len(cleared_results) == 0

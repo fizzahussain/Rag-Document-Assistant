@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+
 from backend.app.api.endpoints import chat, documents, health, search
 
 api_router = APIRouter(prefix="/api/v1")
