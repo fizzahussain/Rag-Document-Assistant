@@ -1,21 +1,36 @@
 from typing import AsyncGenerator
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
 from backend.app.config import settings
+from backend.app.core.logging import logger
+from backend.app.models.base import Base
 
-# Create engine with async driver options
+# Build database URL with fallback to SQLite for local standalone development
+db_url = settings.DATABASE_URL
+if "postgresql" in db_url:
+    # Try connecting to PostgreSQL, or fall back to local SQLite if PostgreSQL is not installed/running locally
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        res = s.connect_ex((settings.POSTGRES_HOST, settings.POSTGRES_PORT))
+        s.close()
+        if res != 0:
+            logger.warning("PostgreSQL port 5432 unreachable. Switching to local SQLite database for standalone mode.")
+            db_url = "sqlite+aiosqlite:///./data/rag_db.sqlite"
+    except Exception:
+        db_url = "sqlite+aiosqlite:///./data/rag_db.sqlite"
+
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    db_url,
     echo=False,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
 )
 
-# Async session factory
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
@@ -25,11 +40,16 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Dependency for yielding async database sessions in FastAPI routes.
+async def init_db() -> None:
+    """Ensures database directory and tables exist on startup."""
+    import os
+    os.makedirs("./data", exist_ok=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
-    Ensures sessions are closed properly after request lifetime.
-    """
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Yields database session."""
     async with AsyncSessionLocal() as session:
         try:
             yield session

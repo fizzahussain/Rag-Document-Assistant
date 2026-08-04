@@ -118,12 +118,7 @@ def chat_action(user_id_str: str, message: str, history, selected_docs, conversa
 
 
 def build_ui():
-    theme = gr.themes.Soft(
-        primary_hue="indigo",
-        secondary_hue="slate",
-    )
-
-    with gr.Blocks(theme=theme, title="Enterprise RAG Dashboard") as demo:
+    with gr.Blocks(title="Enterprise RAG Dashboard") as demo:
         gr.Markdown(
             """
             # Enterprise Document Ingestion & RAG System
@@ -219,5 +214,9 @@ def build_ui():
 
 
 if __name__ == "__main__":
+    theme = gr.themes.Soft(
+        primary_hue="indigo",
+        secondary_hue="slate",
+    )
     ui = build_ui()
-    ui.launch(server_name="0.0.0.0", server_port=7860)
+    ui.launch(server_name="0.0.0.0", server_port=7860, theme=theme)

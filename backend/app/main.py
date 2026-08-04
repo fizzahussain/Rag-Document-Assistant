@@ -2,18 +2,29 @@ import uuid
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
 from backend.app.api.router import api_router
 from backend.app.config import settings
 from backend.app.core.exceptions import RAGException
 from backend.app.core.logging import logger, setup_logging
+from backend.app.database import init_db
 
 # Setup structured logging
 setup_logging()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize DB on startup
+    await init_db()
+    yield
+
 
 app = FastAPI(
     title="Production Multi-User RAG API",
     description="Backend API for multi-user file ingestion, vector search, and RAG QA",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS configuration
