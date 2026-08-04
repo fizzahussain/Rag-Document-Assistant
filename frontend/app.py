@@ -1,223 +1,194 @@
 import os
-import uuid
+from pathlib import Path
+from typing import Any
+
 import gradio as gr
 import httpx
 
-# API Backend Base URL
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000/api/v1")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000/api/v1").rstrip("/")
+ACCESS_TOKEN = os.getenv("RAG_ACCESS_TOKEN", "")
+TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 
 
-def get_headers():
-    return {"Content-Type": "application/json"}
+def headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token.strip()}"}
 
 
-def upload_file_action(user_id_str: str, file):
-    if not file:
-        return "Please select a file to upload.", gr.update()
-    if not user_id_str:
-        user_id_str = str(uuid.uuid4())
-
+def api_error(response: httpx.Response) -> str:
     try:
-        file_path = file.name if hasattr(file, "name") else file
-        filename = os.path.basename(file_path)
-
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
-
-        files = {"file": (filename, file_bytes, "application/octet-stream")}
-        data = {"user_id": user_id_str}
-
-        response = httpx.post(f"{BACKEND_URL}/documents/upload", files=files, data=data, timeout=60.0)
-
-        if response.status_code in (200, 201):
-            doc = response.json()
-            status_msg = f"Successfully uploaded '{doc['filename']}'. Status: {doc['status']}."
-            return status_msg, refresh_documents_action(user_id_str)[0]
-        else:
-            err = response.json()
-            return f"Upload failed: {err.get('message', response.text)}", gr.update()
-    except Exception as e:
-        return f"Error connecting to backend: {str(e)}", gr.update()
+        payload = response.json()
+        return payload.get("message") or payload.get("detail") or response.text
+    except ValueError:
+        return response.text
 
 
-def refresh_documents_action(user_id_str: str):
-    if not user_id_str:
-        return [], []
-
+def upload_file_action(token: str, file_path: str | None):
+    if not token.strip():
+        return "Authentication token is required", []
+    if not file_path:
+        return "Select a file first", []
+    path = Path(file_path)
     try:
-        response = httpx.get(f"{BACKEND_URL}/documents", params={"user_id": user_id_str}, timeout=10.0)
-        if response.status_code == 200:
-            docs = response.json()
-            table_data = []
-            doc_choices = []
-            for d in docs:
-                table_data.append([d["id"], d["filename"], d["status"], f"{d['file_size'] / 1024:.1f} KB", d["updated_at"]])
-                doc_choices.append((f"{d['filename']} ({d['status']})", d["id"]))
-            return table_data, gr.update(choices=doc_choices)
-        return [], gr.update(choices=[])
-    except Exception:
-        return [], gr.update(choices=[])
-
-
-def delete_document_action(user_id_str: str, doc_id: str):
-    if not doc_id:
-        return "Please select a document ID to delete."
-    try:
-        response = httpx.delete(f"{BACKEND_URL}/documents/{doc_id}", params={"user_id": user_id_str}, timeout=10.0)
-        if response.status_code in (200, 204):
-            return f"Document '{doc_id}' deleted successfully."
-        return f"Delete failed: {response.text}"
-    except Exception as e:
-        return f"Error: {str(e)}"
-
-
-def chat_action(user_id_str: str, message: str, history, selected_docs, conversation_id_str: str):
-    if not message.strip():
-        return history, "", "", conversation_id_str
-
-    if not user_id_str:
-        user_id_str = str(uuid.uuid4())
-
-    doc_ids = selected_docs if selected_docs else None
-
-    payload = {
-        "user_id": user_id_str,
-        "message": message,
-        "document_ids": doc_ids,
-        "top_k": 5,
-    }
-    if conversation_id_str:
-        payload["conversation_id"] = conversation_id_str
-
-    try:
-        response = httpx.post(f"{BACKEND_URL}/chat", json=payload, headers=get_headers(), timeout=60.0)
-        if response.status_code == 200:
-            res = response.json()
-            conv_id = res["conversation_id"]
-            answer = res["answer"]
-            sources = res.get("retrieved_sources", [])
-
-            # Format source citations display
-            source_text_list = []
-            for s in sources:
-                page_info = f"page {s['page_number']}" if s.get("page_number") else f"chunk {s.get('chunk_index', 0)}"
-                source_text_list.append(f"**[{s['filename']} - {page_info}]** (Score: {s['score']:.3f})\n> {s['text']}")
-            
-            sources_formatted = "\n\n---\n\n".join(source_text_list) if source_text_list else "No relevant context sources retrieved."
-
-            history.append((message, answer))
-            return history, "", sources_formatted, conv_id
-        else:
-            err = response.json()
-            err_msg = err.get("message", response.text)
-            history.append((message, f"Error: {err_msg}"))
-            return history, "", "Error generating answer.", conversation_id_str
-    except Exception as e:
-        history.append((message, f"Connection error: {str(e)}"))
-        return history, "", f"Failed to reach backend: {str(e)}", conversation_id_str
-
-
-def build_ui():
-    theme = gr.themes.Soft(
-        primary_hue="indigo",
-        secondary_hue="slate",
-    )
-
-    with gr.Blocks(theme=theme, title="Enterprise RAG Dashboard") as demo:
-        gr.Markdown(
-            """
-            # Enterprise Document Ingestion & RAG System
-            Upload files, manage documents, execute semantic search, and ask questions with document citations.
-            """
-        )
-
-        with gr.Row():
-            user_id_input = gr.Textbox(
-                label="User ID (UUID)",
-                value=str(uuid.uuid4()),
-                interactive=True,
-                scale=3,
+        with path.open("rb") as file_handle:
+            response = httpx.post(
+                f"{BACKEND_URL}/documents/upload",
+                files={"file": (path.name, file_handle)},
+                headers=headers(token),
+                timeout=TIMEOUT,
             )
-            refresh_btn = gr.Button("Refresh Dashboard", variant="secondary", scale=1)
+        if response.status_code != 201:
+            return f"Upload failed: {api_error(response)}", []
+        document = response.json()
+        table, _ = refresh_documents_action(token)
+        return f"Uploaded **{document['filename']}** ({document['status']})", table
+    except (OSError, httpx.HTTPError) as exc:
+        return f"Upload failed: {exc}", []
 
-        conversation_id_state = gr.State(value="")
 
+def refresh_documents_action(token: str):
+    if not token.strip():
+        return [], gr.update(choices=[], value=[])
+    try:
+        response = httpx.get(
+            f"{BACKEND_URL}/documents",
+            headers=headers(token),
+            timeout=TIMEOUT,
+        )
+        if response.status_code != 200:
+            return [], gr.update(choices=[], value=[])
+        documents = response.json()
+        rows = [
+            [
+                item["id"],
+                item["filename"],
+                item["status"],
+                f"{item['file_size'] / 1024:.1f} KB",
+                item["updated_at"],
+            ]
+            for item in documents
+        ]
+        choices = [(f"{item['filename']} ({item['status']})", item["id"]) for item in documents]
+        return rows, gr.update(choices=choices, value=[])
+    except httpx.HTTPError:
+        return [], gr.update(choices=[], value=[])
+
+
+def delete_document_action(token: str, document_id: str):
+    if not token.strip() or not document_id.strip():
+        return "Token and document ID are required"
+    try:
+        response = httpx.delete(
+            f"{BACKEND_URL}/documents/{document_id.strip()}",
+            headers=headers(token),
+            timeout=TIMEOUT,
+        )
+        if response.status_code == 204:
+            return "Document deleted"
+        return f"Delete failed: {api_error(response)}"
+    except httpx.HTTPError as exc:
+        return f"Delete failed: {exc}"
+
+
+def chat_action(
+    token: str,
+    message: str,
+    history: list[list[str]] | None,
+    selected_documents: list[str] | None,
+    conversation_id: str,
+):
+    history = history or []
+    if not token.strip():
+        return history, message, "Authentication token is required", conversation_id
+    if not message.strip():
+        return history, "", "Enter a question", conversation_id
+    payload: dict[str, Any] = {
+        "message": message,
+        "top_k": 5,
+        "document_ids": selected_documents or None,
+    }
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+    try:
+        response = httpx.post(
+            f"{BACKEND_URL}/chat",
+            json=payload,
+            headers=headers(token),
+            timeout=TIMEOUT,
+        )
+        if response.status_code != 200:
+            history.append([message, f"Error: {api_error(response)}"])
+            return history, "", "No sources", conversation_id
+        data = response.json()
+        history.append([message, data["answer"]])
+        source_lines = []
+        for source in data.get("retrieved_sources", []):
+            location = source.get("page_number") or source.get("chunk_index")
+            source_lines.append(
+                f"**{source['filename']} — {location}** ({source['score']:.3f})\n\n{source['text']}"
+            )
+        return (
+            history,
+            "",
+            "\n\n---\n\n".join(source_lines) or "No sources",
+            data["conversation_id"],
+        )
+    except httpx.HTTPError as exc:
+        history.append([message, f"Connection error: {exc}"])
+        return history, "", "No sources", conversation_id
+
+
+def build_ui() -> gr.Blocks:
+    with gr.Blocks(title="RAG Document Assistant") as demo:
+        gr.Markdown("# RAG Document Assistant")
+        token_input = gr.Textbox(
+            label="Access token",
+            value=ACCESS_TOKEN,
+            type="password",
+            placeholder="Bearer token generated by the backend",
+        )
+        conversation_state = gr.State("")
         with gr.Tabs():
-            with gr.TabItem("Upload & Ingestion"):
-                with gr.Row():
-                    file_input = gr.File(
-                        label="Select Document (PDF, DOCX, TXT, MD, CSV, HTML, JSON)",
-                        file_types=[".pdf", ".docx", ".txt", ".md", ".csv", ".html", ".json"],
-                    )
-                    upload_btn = gr.Button("Upload & Ingest", variant="primary")
-
-                upload_status_output = gr.Markdown(label="Upload Log")
-
-                gr.Markdown("### Uploaded Documents")
-                doc_table = gr.Dataframe(
-                    headers=["ID", "Filename", "Status", "Size", "Updated At"],
-                    datatype=["str", "str", "str", "str", "str"],
+            with gr.TabItem("Documents"):
+                file_input = gr.File(type="filepath")
+                upload_button = gr.Button("Upload", variant="primary")
+                upload_status = gr.Markdown()
+                refresh_button = gr.Button("Refresh")
+                document_table = gr.Dataframe(
+                    headers=["ID", "Filename", "Status", "Size", "Updated"],
                     interactive=False,
                 )
+                selected_documents = gr.CheckboxGroup(label="Search selected documents")
+                delete_id = gr.Textbox(label="Document ID to delete")
+                delete_button = gr.Button("Delete", variant="stop")
+                delete_status = gr.Markdown()
+            with gr.TabItem("Chat"):
+                chatbot = gr.Chatbot(type="tuples")
+                message = gr.Textbox(label="Question")
+                send_button = gr.Button("Send", variant="primary")
+                sources = gr.Markdown()
 
-                with gr.Row():
-                    delete_doc_id_input = gr.Textbox(label="Document ID to Delete", placeholder="Paste Document UUID")
-                    delete_doc_btn = gr.Button("Delete Document", variant="stop")
-                delete_status_output = gr.Markdown()
-
-            with gr.TabItem("RAG Chat & Assistant"):
-                with gr.Row():
-                    with gr.Column(scale=3):
-                        chatbot = gr.Chatbot(label="Conversation", height=500)
-                        msg_input = gr.Textbox(
-                            label="Ask a question about your documents...",
-                            placeholder="e.g. What are the key findings in the report?",
-                            lines=2,
-                        )
-                        with gr.Row():
-                            send_btn = gr.Button("Send Question", variant="primary")
-                            clear_chat_btn = gr.Button("Clear Session")
-
-                    with gr.Column(scale=2):
-                        selected_docs_checkbox = gr.CheckboxGroup(
-                            label="Filter Search by Documents (Optional)",
-                            choices=[],
-                        )
-                        sources_output = gr.Markdown(label="Retrieved Context & Citations")
-
-        # Callbacks
-        upload_btn.click(
-            fn=upload_file_action,
-            inputs=[user_id_input, file_input],
-            outputs=[upload_status_output, doc_table],
+        upload_button.click(
+            upload_file_action,
+            inputs=[token_input, file_input],
+            outputs=[upload_status, document_table],
         )
-
-        refresh_btn.click(
-            fn=refresh_documents_action,
-            inputs=[user_id_input],
-            outputs=[doc_table, selected_docs_checkbox],
+        refresh_button.click(
+            refresh_documents_action,
+            inputs=[token_input],
+            outputs=[document_table, selected_documents],
         )
-
-        delete_doc_btn.click(
-            fn=delete_document_action,
-            inputs=[user_id_input, delete_doc_id_input],
-            outputs=[delete_status_output],
+        delete_button.click(
+            delete_document_action,
+            inputs=[token_input, delete_id],
+            outputs=[delete_status],
         )
-
-        send_btn.click(
-            fn=chat_action,
-            inputs=[user_id_input, msg_input, chatbot, selected_docs_checkbox, conversation_id_state],
-            outputs=[chatbot, msg_input, sources_output, conversation_id_state],
+        send_button.click(
+            chat_action,
+            inputs=[token_input, message, chatbot, selected_documents, conversation_state],
+            outputs=[chatbot, message, sources, conversation_state],
         )
-
-        clear_chat_btn.click(
-            fn=lambda: ([], "", "", str(uuid.uuid4())),
-            outputs=[chatbot, msg_input, sources_output, conversation_id_state],
-        )
-
     return demo
 
 
 if __name__ == "__main__":
-    ui = build_ui()
-    ui.launch(server_name="0.0.0.0", server_port=7860)
+    build_ui().launch(server_name="0.0.0.0", server_port=7860)
