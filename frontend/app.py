@@ -1,0 +1,194 @@
+import os
+from pathlib import Path
+from typing import Any
+
+import gradio as gr
+import httpx
+
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000/api/v1").rstrip("/")
+ACCESS_TOKEN = os.getenv("RAG_ACCESS_TOKEN", "")
+TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+
+
+def headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token.strip()}"}
+
+
+def api_error(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+        return payload.get("message") or payload.get("detail") or response.text
+    except ValueError:
+        return response.text
+
+
+def upload_file_action(token: str, file_path: str | None):
+    if not token.strip():
+        return "Authentication token is required", []
+    if not file_path:
+        return "Select a file first", []
+    path = Path(file_path)
+    try:
+        with path.open("rb") as file_handle:
+            response = httpx.post(
+                f"{BACKEND_URL}/documents/upload",
+                files={"file": (path.name, file_handle)},
+                headers=headers(token),
+                timeout=TIMEOUT,
+            )
+        if response.status_code != 201:
+            return f"Upload failed: {api_error(response)}", []
+        document = response.json()
+        table, _ = refresh_documents_action(token)
+        return f"Uploaded **{document['filename']}** ({document['status']})", table
+    except (OSError, httpx.HTTPError) as exc:
+        return f"Upload failed: {exc}", []
+
+
+def refresh_documents_action(token: str):
+    if not token.strip():
+        return [], gr.update(choices=[], value=[])
+    try:
+        response = httpx.get(
+            f"{BACKEND_URL}/documents",
+            headers=headers(token),
+            timeout=TIMEOUT,
+        )
+        if response.status_code != 200:
+            return [], gr.update(choices=[], value=[])
+        documents = response.json()
+        rows = [
+            [
+                item["id"],
+                item["filename"],
+                item["status"],
+                f"{item['file_size'] / 1024:.1f} KB",
+                item["updated_at"],
+            ]
+            for item in documents
+        ]
+        choices = [(f"{item['filename']} ({item['status']})", item["id"]) for item in documents]
+        return rows, gr.update(choices=choices, value=[])
+    except httpx.HTTPError:
+        return [], gr.update(choices=[], value=[])
+
+
+def delete_document_action(token: str, document_id: str):
+    if not token.strip() or not document_id.strip():
+        return "Token and document ID are required"
+    try:
+        response = httpx.delete(
+            f"{BACKEND_URL}/documents/{document_id.strip()}",
+            headers=headers(token),
+            timeout=TIMEOUT,
+        )
+        if response.status_code == 204:
+            return "Document deleted"
+        return f"Delete failed: {api_error(response)}"
+    except httpx.HTTPError as exc:
+        return f"Delete failed: {exc}"
+
+
+def chat_action(
+    token: str,
+    message: str,
+    history: list[list[str]] | None,
+    selected_documents: list[str] | None,
+    conversation_id: str,
+):
+    history = history or []
+    if not token.strip():
+        return history, message, "Authentication token is required", conversation_id
+    if not message.strip():
+        return history, "", "Enter a question", conversation_id
+    payload: dict[str, Any] = {
+        "message": message,
+        "top_k": 5,
+        "document_ids": selected_documents or None,
+    }
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+    try:
+        response = httpx.post(
+            f"{BACKEND_URL}/chat",
+            json=payload,
+            headers=headers(token),
+            timeout=TIMEOUT,
+        )
+        if response.status_code != 200:
+            history.append([message, f"Error: {api_error(response)}"])
+            return history, "", "No sources", conversation_id
+        data = response.json()
+        history.append([message, data["answer"]])
+        source_lines = []
+        for source in data.get("retrieved_sources", []):
+            location = source.get("page_number") or source.get("chunk_index")
+            source_lines.append(
+                f"**{source['filename']} — {location}** ({source['score']:.3f})\n\n{source['text']}"
+            )
+        return (
+            history,
+            "",
+            "\n\n---\n\n".join(source_lines) or "No sources",
+            data["conversation_id"],
+        )
+    except httpx.HTTPError as exc:
+        history.append([message, f"Connection error: {exc}"])
+        return history, "", "No sources", conversation_id
+
+
+def build_ui() -> gr.Blocks:
+    with gr.Blocks(title="RAG Document Assistant") as demo:
+        gr.Markdown("# RAG Document Assistant")
+        token_input = gr.Textbox(
+            label="Access token",
+            value=ACCESS_TOKEN,
+            type="password",
+            placeholder="Bearer token generated by the backend",
+        )
+        conversation_state = gr.State("")
+        with gr.Tabs():
+            with gr.TabItem("Documents"):
+                file_input = gr.File(type="filepath")
+                upload_button = gr.Button("Upload", variant="primary")
+                upload_status = gr.Markdown()
+                refresh_button = gr.Button("Refresh")
+                document_table = gr.Dataframe(
+                    headers=["ID", "Filename", "Status", "Size", "Updated"],
+                    interactive=False,
+                )
+                selected_documents = gr.CheckboxGroup(label="Search selected documents")
+                delete_id = gr.Textbox(label="Document ID to delete")
+                delete_button = gr.Button("Delete", variant="stop")
+                delete_status = gr.Markdown()
+            with gr.TabItem("Chat"):
+                chatbot = gr.Chatbot(type="tuples")
+                message = gr.Textbox(label="Question")
+                send_button = gr.Button("Send", variant="primary")
+                sources = gr.Markdown()
+
+        upload_button.click(
+            upload_file_action,
+            inputs=[token_input, file_input],
+            outputs=[upload_status, document_table],
+        )
+        refresh_button.click(
+            refresh_documents_action,
+            inputs=[token_input],
+            outputs=[document_table, selected_documents],
+        )
+        delete_button.click(
+            delete_document_action,
+            inputs=[token_input, delete_id],
+            outputs=[delete_status],
+        )
+        send_button.click(
+            chat_action,
+            inputs=[token_input, message, chatbot, selected_documents, conversation_state],
+            outputs=[chatbot, message, sources, conversation_state],
+        )
+    return demo
+
+
+if __name__ == "__main__":
+    build_ui().launch(server_name="0.0.0.0", server_port=7860)

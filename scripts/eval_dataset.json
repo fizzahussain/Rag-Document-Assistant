@@ -1,0 +1,17 @@
+[
+  {
+    "query": "What database systems are supported in the RAG application architecture?",
+    "expected_context_keywords": ["PostgreSQL", "Qdrant", "SQLAlchemy"],
+    "expected_answer_contains": ["PostgreSQL", "Qdrant"]
+  },
+  {
+    "query": "How are scanned image-only PDFs handled during ingestion?",
+    "expected_context_keywords": ["OCR", "scanned", "little or no extractable text"],
+    "expected_answer_contains": ["OCR"]
+  },
+  {
+    "query": "What file formats are supported for extraction?",
+    "expected_context_keywords": ["PDF", "DOCX", "TXT", "MD", "CSV", "HTML", "JSON"],
+    "expected_answer_contains": ["PDF", "DOCX"]
+  }
+]

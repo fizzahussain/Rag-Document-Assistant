@@ -1,0 +1,8 @@
+# Global code ownership
+* @fizzahussain
+
+# Directory specific code owners
+/backend/ @fizzahussain
+/frontend/ @fizzahussain
+/.github/ @fizzahussain
+/docs/ @fizzahussain

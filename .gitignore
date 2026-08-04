@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Secrets and environment configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# IDE and operating system files
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+*.swp
+
+# Storage and uploaded/generated files
+storage/uploads/*
+storage/processed/*
+storage/temp/*
+storage/models/*
+storage/cache/*
+data/uploads/*
+!storage/uploads/.gitkeep
+!storage/processed/.gitkeep
+!storage/temp/.gitkeep
+!storage/models/.gitkeep
+!storage/cache/.gitkeep
+!data/uploads/.gitkeep
+
+# Databases and vector stores
+*.sqlite
+*.db
+postgres_data/
+qdrant_data/
+*.dump
+*.sql
+
+# Logs and reports
+*.log
+logs/
+coverage.xml
+pytest_report.xml
+*.bench
+
+# Frontend and Gradio temporary data
+flagged/
+.gradio/
+tmp/
+
+# Model artifacts and caches
+.cache/
+huggingface/
+transformers/
+
+# Anti-Gravity / IDE metadata
+.system_generated/

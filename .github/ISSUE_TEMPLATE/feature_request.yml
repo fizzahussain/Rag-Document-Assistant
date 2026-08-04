@@ -1,0 +1,51 @@
+name: Feature Request
+description: Suggest an enhancement or new feature
+title: "[FEAT]: "
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Being Solved
+      description: Is your feature request related to a problem or missing capability?
+      placeholder: Describe the problem...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Behavior / Solution
+      description: Describe how the new feature should behave.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered alternative solutions?
+
+  - type: checkboxes
+    id: affected_areas
+    attributes:
+      label: Affected System Components
+      options:
+        - label: FastAPI Backend API
+        - label: Gradio Frontend Interface
+        - label: File Extractors / Parsing Pipeline
+        - label: PostgreSQL Schema / Migrations
+        - label: Qdrant Payload / Vector Store
+        - label: Security & User Isolation
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Clear checklist items to verify feature completion.
+      placeholder: |
+        - [ ] Feature is implemented
+        - [ ] Unit tests pass
+        - [ ] Documentation updated
+    validations:
+      required: true
