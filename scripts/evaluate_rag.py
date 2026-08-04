@@ -19,26 +19,49 @@ from backend.app.services.retrieval import RetrievalService
 async def run_evaluation() -> None:
     dataset_path = Path(__file__).with_name("eval_dataset.json")
     eval_items = json.loads(dataset_path.read_text(encoding="utf-8"))
+
     qdrant = QdrantService(in_memory=True)
     embedder = MockEmbeddingProvider()
     llm = MockLLMProvider()
+
     user_id = uuid.uuid4()
     document_id = uuid.uuid4()
+
     sample_text = (
-        "PostgreSQL and Qdrant are the core database systems supported in the RAG application architecture. "
-        "PostgreSQL handles relational data using SQLAlchemy 2.0 async, while Qdrant stores vectors. "
-        "Scanned image-only PDFs require OCR. Supported formats include PDF, DOCX, TXT, MD, CSV, HTML, and JSON."
+        "PostgreSQL and Qdrant are the core database systems supported "
+        "in the RAG application architecture. "
+        "PostgreSQL handles relational data using SQLAlchemy 2.0 async, "
+        "while Qdrant stores vectors. "
+        "Scanned image-only PDFs require OCR. Supported formats include "
+        "PDF, DOCX, TXT, MD, CSV, HTML, and JSON."
     )
+
     extracted = ExtractedDocument(
         text=sample_text,
-        pages=[ExtractedPage(page_number=1, text=sample_text)],
+        pages=[
+            ExtractedPage(
+                page_number=1,
+                text=sample_text,
+            )
+        ],
         metadata={"format": "TXT"},
     )
-    chunks = TextChunker(chunk_size=300, chunk_overlap=30).chunk_document(extracted)
+
+    chunks = TextChunker(
+        chunk_size=300,
+        chunk_overlap=30,
+    ).chunk_document(extracted)
+
     vectors = await embedder.embed_texts([chunk.text for chunk in chunks])
 
     async with AsyncSessionLocal() as db:
-        db.add(User(id=user_id, workspace_id=str(uuid.uuid4())))
+        db.add(
+            User(
+                id=user_id,
+                workspace_id=str(uuid.uuid4()),
+            )
+        )
+
         db.add(
             Document(
                 id=document_id,
@@ -51,12 +74,15 @@ async def run_evaluation() -> None:
                 status="ready",
             )
         )
+
         points = []
+
         for chunk, vector in zip(chunks, vectors, strict=True):
             chunk_id = uuid.uuid5(
                 uuid.NAMESPACE_URL,
-                f"{document_id}:{chunk.chunk_index}:{chunk.chunk_hash}",
+                (f"{document_id}:{chunk.chunk_index}:{chunk.chunk_hash}"),
             )
+
             db.add(
                 DocumentChunk(
                     id=chunk_id,
@@ -68,6 +94,7 @@ async def run_evaluation() -> None:
                     qdrant_point_id=chunk_id,
                 )
             )
+
             points.append(
                 rest_models.PointStruct(
                     id=str(chunk_id),
@@ -79,27 +106,45 @@ async def run_evaluation() -> None:
                     },
                 )
             )
+
         await db.commit()
         await qdrant.upsert_points(points)
-        retrieval = RetrievalService(db, qdrant_service=qdrant, embedder=embedder)
+
+        retrieval = RetrievalService(
+            db,
+            qdrant_service=qdrant,
+            embedder=embedder,
+        )
+
         hits = 0
+
         for item in eval_items:
             results = await retrieval.search(
                 query=item["query"],
                 user_id=user_id,
                 limit=3,
             )
+
             retrieved_text = " ".join(result.text for result in results)
+
             hit = any(
                 keyword.lower() in retrieved_text.lower()
                 for keyword in item["expected_context_keywords"]
             )
+
             hits += int(hit)
-            answer = await llm.generate_answer(query=item["query"], sources=results)
+
+            answer = await llm.generate_answer(
+                query=item["query"],
+                sources=results,
+            )
+
             print(f"Query: {item['query']}")
             print(f"Retrieval hit: {'yes' if hit else 'no'}")
             print(f"Answer: {answer.answer[:150]}")
-        print(f"Retrieval hit rate: {(hits / len(eval_items)) * 100:.1f}%")
+
+        hit_rate = (hits / len(eval_items)) * 100
+        print(f"Retrieval hit rate: {hit_rate:.1f}%")
 
 
 if __name__ == "__main__":
