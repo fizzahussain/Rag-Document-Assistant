@@ -1,30 +1,58 @@
-[tool.ruff]
-target-version = "py312"
-line-length = 100
-select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort
-    "B",  # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "UP", # pyupgrade
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rag-document-assistant"
+version = "0.1.0"
+description = "Document ingestion and retrieval-augmented generation system"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.28,<1.0",
+    "pydantic>=2.6,<3.0",
+    "pydantic-settings>=2.2,<3.0",
+    "sqlalchemy[asyncio]>=2.0,<3.0",
+    "asyncpg>=0.29,<1.0",
+    "aiosqlite>=0.20,<1.0",
+    "alembic>=1.13,<2.0",
+    "qdrant-client>=1.8,<2.0",
+    "pymupdf>=1.23,<2.0",
+    "python-docx>=1.1,<2.0",
+    "pandas>=2.2,<3.0",
+    "beautifulsoup4>=4.12,<5.0",
+    "httpx>=0.27,<1.0",
+    "structlog>=24.1,<26.0",
+    "python-multipart>=0.0.9,<1.0",
+    "cryptography>=42,<47",
+    "gradio>=4.20,<7.0",
 ]
-ignore = []
 
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "pytest-asyncio>=0.23,<2.0",
+    "pytest-cov>=4.1,<8.0",
+    "ruff>=0.3,<1.0",
+    "mypy>=1.9,<2.0",
+]
 
-[tool.mypy]
-python_version = "3.12"
-strict = true
-warn_unused_configs = true
-ignore_missing_imports = true
-disallow_untyped_defs = true
-check_untyped_defs = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-show_error_codes = true
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "backend",
+    "backend.*",
+    "frontend",
+    "frontend.*",
+]
+exclude = [
+    "data",
+    "data.*",
+    "tests",
+    "tests.*",
+    "storage",
+    "storage.*",
+    "scripts",
+    "scripts.*",
+]
