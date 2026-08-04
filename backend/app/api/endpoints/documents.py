@@ -1,11 +1,17 @@
-from typing import List
+from typing import List, Optional
 import uuid
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.config import settings
 from backend.app.core.exceptions import NotFoundError, ValidationError
-from backend.app.core.security import calculate_sha256, validate_file_extension, validate_file_size
+from backend.app.core.security import (
+    calculate_sha256,
+    get_current_user_id,
+    sanitize_filename,
+    validate_file_extension,
+    validate_file_size,
+)
 from backend.app.database import get_db
 from backend.app.models.document import Document, DocumentChunk
 from backend.app.models.user import User
@@ -36,11 +42,13 @@ async def get_or_create_user(db: AsyncSession, user_id_str: str) -> User:
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(
     file: UploadFile = File(...),
-    user_id: str = Form(...),
+    user_id: Optional[str] = Form(None),
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentResponse:
     """Uploads, validates, stores, and ingests a document."""
-    user = await get_or_create_user(db, user_id)
+    target_user_id = uuid.UUID(user_id) if user_id else current_user_id
+    user = await get_or_create_user(db, str(target_user_id))
     filename = file.filename or "uploaded_file"
 
     validate_file_extension(filename, settings.ALLOWED_EXTENSIONS)
@@ -57,7 +65,6 @@ async def upload_document(
     )
     existing_doc = existing_result.scalar_one_or_none()
     if existing_doc:
-        # Update and re-ingest duplicate file idempotently
         existing_doc.status = "queued"
         await db.commit()
         ingestion = IngestionService(db, storage_service)
@@ -85,11 +92,13 @@ async def upload_document(
 
 @router.get("", response_model=List[DocumentResponse])
 async def list_documents(
-    user_id: str,
+    user_id: Optional[str] = None,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> List[DocumentResponse]:
     """Lists all uploaded documents for a specific user."""
-    user = await get_or_create_user(db, user_id)
+    target_user_id = uuid.UUID(user_id) if user_id else current_user_id
+    user = await get_or_create_user(db, str(target_user_id))
     result = await db.execute(
         select(Document).where(Document.user_id == user.id).order_by(Document.created_at.desc())
     )
@@ -153,14 +162,11 @@ async def reprocess_document(
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     document_id: uuid.UUID,
-    user_id: str,
+    user_id: Optional[str] = None,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Deletes document and all related database records and Qdrant points."""
-    try:
-        user_uuid = uuid.UUID(user_id)
-    except ValueError:
-        raise ValidationError("Invalid user_id format.")
-
+    target_user_id = uuid.UUID(user_id) if user_id else current_user_id
     ingestion = IngestionService(db)
-    await ingestion.delete_document(document_id, user_uuid)
+    await ingestion.delete_document(document_id, target_user_id)
