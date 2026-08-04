@@ -1,7 +1,12 @@
 class RAGException(Exception):
     """Base exception class for all custom application errors."""
 
-    def __init__(self, message: str, error_code: str = "INTERNAL_ERROR", details: dict | None = None):
+    def __init__(
+        self,
+        message: str,
+        error_code: str = "INTERNAL_ERROR",
+        details: dict | None = None,
+    ):
         super().__init__(message)
         self.message = message
         self.error_code = error_code
@@ -32,7 +37,10 @@ class ExtractionError(RAGException):
 class OCRRequiredError(ExtractionError):
     """Raised when a PDF contains no extractable text (e.g. scanned image-only PDF)."""
 
-    def __init__(self, message: str = "Scanned PDF detected: Image-only file requires OCR processing."):
+    def __init__(
+        self,
+        message: str = "Scanned PDF detected: Image-only file requires OCR processing.",
+    ):
         super().__init__(message=message, details={"ocr_required": True})
 
 

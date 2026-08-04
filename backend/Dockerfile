@@ -1,21 +1,13 @@
 FROM python:3.12-slim
-
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-
-# Install system dependencies needed for PyMuPDF and C extensions
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY backend/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
-
-COPY backend/ /app/backend/
-COPY pyproject.toml /app/pyproject.toml
-
-ENV PYTHONPATH=/app
-
+RUN addgroup --system app && adduser --system --ingroup app app
+COPY pyproject.toml README.md LICENSE ./
+COPY backend ./backend
+COPY frontend ./frontend
+RUN pip install --no-cache-dir .
+RUN mkdir -p /app/data/uploads && chown -R app:app /app
+USER app
 EXPOSE 8000
-
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"
+ENTRYPOINT ["/app/backend/entrypoint.sh"]

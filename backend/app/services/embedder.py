@@ -1,8 +1,9 @@
-from abc import ABC, abstractmethod
 import hashlib
 import math
-from typing import List
+from abc import ABC, abstractmethod
+
 import httpx
+
 from backend.app.config import settings
 from backend.app.core.exceptions import RAGException
 
@@ -11,14 +12,12 @@ class BaseEmbeddingProvider(ABC):
     """Abstract interface for embedding generation services."""
 
     @abstractmethod
-    async def embed_texts(self, texts: List[str]) -> List[List[float]]:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Generates embedding vectors for a batch of text chunks."""
-        pass
 
     @abstractmethod
-    async def embed_query(self, text: str) -> List[float]:
+    async def embed_query(self, text: str) -> list[float]:
         """Generates an embedding vector for a single query text."""
-        pass
 
 
 class MockEmbeddingProvider(BaseEmbeddingProvider):
@@ -30,10 +29,10 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
     def __init__(self, dimension: int = settings.EMBEDDING_DIMENSION):
         self.dimension = dimension
 
-    def _generate_vector(self, text: str) -> List[float]:
+    def _generate_vector(self, text: str) -> list[float]:
         # Hash text to generate a deterministic seed
         seed_hash = hashlib.sha256(text.encode("utf-8")).digest()
-        raw_vector: List[float] = []
+        raw_vector: list[float] = []
 
         for i in range(self.dimension):
             byte_val = seed_hash[(i * 7) % len(seed_hash)]
@@ -46,10 +45,10 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
             return [0.0] * self.dimension
         return [x / norm for x in raw_vector]
 
-    async def embed_texts(self, texts: List[str]) -> List[List[float]]:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         return [self._generate_vector(t) for t in texts]
 
-    async def embed_query(self, text: str) -> List[float]:
+    async def embed_query(self, text: str) -> list[float]:
         return self._generate_vector(text)
 
 
@@ -58,7 +57,9 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
 
     def __init__(
         self,
-        api_key: str | None = settings.OPENAI_API_KEY,
+        api_key: str | None = (
+            settings.OPENAI_API_KEY.get_secret_value() if settings.OPENAI_API_KEY else None
+        ),
         model: str = settings.EMBEDDING_MODEL,
     ):
         if not api_key:
@@ -67,7 +68,7 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         self.model = model
         self.endpoint = "https://api.openai.com/v1/embeddings"
 
-    async def embed_texts(self, texts: List[str]) -> List[List[float]]:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         headers = {
@@ -85,7 +86,7 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
             data = response.json()
             return [item["embedding"] for item in data["data"]]
 
-    async def embed_query(self, text: str) -> List[float]:
+    async def embed_query(self, text: str) -> list[float]:
         results = await self.embed_texts([text])
         return results[0]
 

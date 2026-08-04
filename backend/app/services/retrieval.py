@@ -1,83 +1,104 @@
-from typing import Any, Dict, List, Optional
+import uuid
+
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.models.document import Document, DocumentChunk
 from backend.app.services.embedder import BaseEmbeddingProvider, EmbeddingProviderFactory
-from backend.app.services.qdrant import QdrantService
+from backend.app.services.qdrant import QdrantService, get_qdrant_service
 
 
 class RetrievedSource(BaseModel):
-    """Container for retrieved context excerpt and citation information."""
-
     document_id: str
     chunk_id: str
     filename: str
-    page_number: Optional[int]
+    page_number: int | None
     chunk_index: int
     score: float
     text: str
 
 
 class RetrievalService:
-    """Orchestrates query embedding, vector search, payload filtering, and deduplication."""
-
     def __init__(
         self,
-        qdrant_service: Optional[QdrantService] = None,
-        embedder: Optional[BaseEmbeddingProvider] = None,
-    ):
-        self.qdrant_service = qdrant_service or QdrantService()
+        db: AsyncSession,
+        qdrant_service: QdrantService | None = None,
+        embedder: BaseEmbeddingProvider | None = None,
+    ) -> None:
+        self.db = db
+        self.qdrant_service = qdrant_service or get_qdrant_service()
         self.embedder = embedder or EmbeddingProviderFactory.get_provider()
 
     async def search(
         self,
         query: str,
-        user_id: str,
+        user_id: uuid.UUID,
         limit: int = 5,
-        score_threshold: Optional[float] = None,
-        document_ids: Optional[List[str]] = None,
-        workspace_id: Optional[str] = None,
-    ) -> List[RetrievedSource]:
-        """Performs dense vector retrieval for a query and formats attribution references."""
+        score_threshold: float | None = None,
+        document_ids: list[uuid.UUID] | None = None,
+        workspace_id: str | None = None,
+    ) -> list[RetrievedSource]:
         if not query.strip():
             return []
+        limit = min(max(limit, 1), 50)
 
-        # 1. Generate query embedding vector
-        query_vector = await self.embedder.embed_query(query)
-
-        # 2. Search Qdrant vector database with user isolation filters
-        scored_points = await self.qdrant_service.search_points(
-            query_vector=query_vector,
-            user_id=user_id,
-            limit=limit * 2,  # Fetch extra for deduplication
-            score_threshold=score_threshold,
-            document_ids=document_ids,
-            workspace_id=workspace_id,
-        )
-
-        # 3. Deduplicate results based on text content
-        sources: List[RetrievedSource] = []
-        seen_texts = set()
-
-        for point in scored_points:
-            payload: Dict[str, Any] = point.payload or {}
-            text_content = payload.get("text", "")
-            
-            if text_content in seen_texts:
-                continue
-            seen_texts.add(text_content)
-
-            sources.append(
-                RetrievedSource(
-                    document_id=str(payload.get("document_id", "")),
-                    chunk_id=str(payload.get("chunk_id", point.id)),
-                    filename=payload.get("filename", "unknown"),
-                    page_number=payload.get("page_number"),
-                    chunk_index=payload.get("chunk_index", 0),
-                    score=float(point.score),
-                    text=text_content,
+        if document_ids:
+            owned = await self.db.execute(
+                select(Document.id).where(
+                    Document.user_id == user_id,
+                    Document.id.in_(document_ids),
                 )
             )
+            owned_ids = set(owned.scalars().all())
+            if owned_ids != set(document_ids):
+                return []
 
-            if len(sources) >= limit:
-                break
+        query_vector = await self.embedder.embed_query(query)
+        points = await self.qdrant_service.search_points(
+            query_vector=query_vector,
+            user_id=str(user_id),
+            limit=limit * 2,
+            score_threshold=score_threshold,
+            document_ids=[str(item) for item in document_ids] if document_ids else None,
+            workspace_id=workspace_id,
+        )
+        if not points:
+            return []
 
-        return sources
+        score_by_chunk: dict[uuid.UUID, float] = {}
+        for point in points:
+            payload = point.payload or {}
+            raw_chunk_id = payload.get("chunk_id", point.id)
+            try:
+                score_by_chunk[uuid.UUID(str(raw_chunk_id))] = float(point.score)
+            except (ValueError, TypeError):
+                continue
+
+        if not score_by_chunk:
+            return []
+
+        result = await self.db.execute(
+            select(DocumentChunk, Document)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(
+                DocumentChunk.id.in_(list(score_by_chunk)),
+                Document.user_id == user_id,
+                Document.status == "ready",
+            )
+        )
+        rows = result.all()
+        sources = [
+            RetrievedSource(
+                document_id=str(document.id),
+                chunk_id=str(chunk.id),
+                filename=document.filename,
+                page_number=chunk.page_number,
+                chunk_index=chunk.chunk_index,
+                score=score_by_chunk[chunk.id],
+                text=chunk.text_content,
+            )
+            for chunk, document in rows
+        ]
+        sources.sort(key=lambda item: item.score, reverse=True)
+        return sources[:limit]

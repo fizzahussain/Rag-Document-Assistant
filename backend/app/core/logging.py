@@ -1,17 +1,19 @@
 import logging
 import sys
-from typing import Any, Dict
+
 import structlog
+
 from backend.app.config import settings
 
 
 def setup_logging() -> None:
-    """Configures structured logging with structlog.
+    """Configure structured logging with structlog"""
 
-    In production/default, logs are formatted as JSON.
-    Standard logging is also intercepted and routed through structlog.
-    """
-    log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+    log_level = getattr(
+        logging,
+        settings.LOG_LEVEL.upper(),
+        logging.INFO,
+    )
 
     shared_processors = [
         structlog.contextvars.merge_contextvars,
@@ -22,27 +24,31 @@ def setup_logging() -> None:
         structlog.processors.UnicodeDecoder(),
     ]
 
-    # Use JSONRenderer for production/structured logs, but allow ConsoleRenderer if preferred locally
-    # We will use JSONRenderer by default for production quality
     structlog.configure(
-        processors=shared_processors + [structlog.processors.JSONRenderer()],
+        processors=[
+            *shared_processors,
+            structlog.processors.JSONRenderer(),
+        ],
         logger_factory=structlog.PrintLoggerFactory(),
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
         cache_logger_on_first_use=True,
     )
 
-    # Configure the standard library logging to intercept logs
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
         level=log_level,
     )
 
-    # Intercept third-party logs (e.g. uvicorn, sqlalchemy)
-    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access", "sqlalchemy.engine"):
-        logger = logging.getLogger(logger_name)
-        logger.handlers = []
-        logger.propagate = True
+    for logger_name in (
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+        "sqlalchemy.engine",
+    ):
+        standard_logger = logging.getLogger(logger_name)
+        standard_logger.handlers.clear()
+        standard_logger.propagate = True
 
 
 logger = structlog.get_logger()

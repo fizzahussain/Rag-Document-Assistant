@@ -1,141 +1,170 @@
-from typing import List
+import json
 import uuid
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+
+import anyio
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from backend.app.config import settings
 from backend.app.core.exceptions import NotFoundError, ValidationError
-from backend.app.core.security import calculate_sha256, validate_file_extension, validate_file_size
+from backend.app.core.security import get_current_user_id, validate_file_extension
 from backend.app.database import get_db
 from backend.app.models.document import Document, DocumentChunk
 from backend.app.models.user import User
-from backend.app.schemas.document import DocumentChunkResponse, DocumentResponse, DocumentStatusResponse
+from backend.app.schemas.document import (
+    DocumentChunkResponse,
+    DocumentResponse,
+    DocumentStatusResponse,
+)
 from backend.app.services.ingestion import IngestionService
 from backend.app.services.storage import StorageService
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
 
-async def get_or_create_user(db: AsyncSession, user_id_str: str) -> User:
-    """Helper to retrieve or auto-create a user."""
-    try:
-        user_uuid = uuid.UUID(user_id_str)
-    except ValueError:
-        raise ValidationError("Invalid user_id format. Must be a valid UUID.")
-
-    result = await db.execute(select(User).where(User.id == user_uuid))
+async def ensure_user(db: AsyncSession, user_id: uuid.UUID) -> User:
+    result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    if not user:
-        user = User(id=user_uuid, workspace_id=str(uuid.uuid4()))
+    if user is None:
+        user = User(id=user_id, workspace_id=str(uuid.uuid4()))
         db.add(user)
         await db.commit()
         await db.refresh(user)
     return user
 
 
-@router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+async def validate_detectable_content(path: str, extension: str) -> None:
+    data = await anyio.Path(path).read_bytes()
+    if extension == "pdf" and not data.startswith(b"%PDF-"):
+        raise ValidationError("File content does not match PDF format")
+    if extension == "docx" and not data.startswith(b"PK"):
+        raise ValidationError("File content does not match DOCX format")
+    if extension == "json":
+        try:
+            json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValidationError("Invalid JSON document") from exc
+
+
+@router.post(
+    "/upload",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def upload_document(
     file: UploadFile = File(...),
-    user_id: str = Form(...),
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentResponse:
-    """Uploads, validates, stores, and ingests a document."""
-    user = await get_or_create_user(db, user_id)
-    filename = file.filename or "uploaded_file"
-
-    validate_file_extension(filename, settings.ALLOWED_EXTENSIONS)
-    file_bytes = await file.read()
-    validate_file_size(file_bytes, settings.MAX_UPLOAD_SIZE_MB)
-
-    file_hash = calculate_sha256(file_bytes)
-    storage_service = StorageService()
-    storage_path = storage_service.save_file(str(user.id), filename, file_bytes)
-
-    # Check for duplicate document for this user
-    existing_result = await db.execute(
-        select(Document).where(Document.user_id == user.id, Document.file_hash == file_hash)
+    extension = validate_file_extension(
+        file.filename or "",
+        list(settings.ALLOWED_EXTENSIONS),
     )
-    existing_doc = existing_result.scalar_one_or_none()
-    if existing_doc:
-        # Update and re-ingest duplicate file idempotently
-        existing_doc.status = "queued"
-        await db.commit()
-        ingestion = IngestionService(db, storage_service)
-        return await ingestion.process_document(existing_doc.id)
+    user = await ensure_user(db, current_user_id)
+    storage = StorageService()
+    stored = await storage.save_upload(str(user.id), file)
+    try:
+        await validate_detectable_content(stored.path, extension)
+    except Exception:
+        await storage.delete_file(stored.path)
+        raise
 
-    # Create new document entry
-    doc = Document(
+    existing_result = await db.execute(
+        select(Document).where(
+            Document.user_id == user.id,
+            Document.file_hash == stored.sha256,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing is not None:
+        await storage.delete_file(stored.path)
+        return existing
+
+    document = Document(
         user_id=user.id,
-        filename=filename,
-        storage_path=storage_path,
+        filename=stored.original_filename,
+        storage_path=stored.path,
         mime_type=file.content_type or "application/octet-stream",
-        file_hash=file_hash,
-        file_size=len(file_bytes),
+        file_hash=stored.sha256,
+        file_size=stored.size,
         status="uploaded",
     )
-    db.add(doc)
+    db.add(document)
     await db.commit()
-    await db.refresh(doc)
+    await db.refresh(document)
+    return await IngestionService(db, storage).process_document(
+        document.id,
+        current_user_id,
+    )
 
-    # Run ingestion pipeline
-    ingestion = IngestionService(db, storage_service)
-    processed_doc = await ingestion.process_document(doc.id)
-    return processed_doc
 
-
-@router.get("", response_model=List[DocumentResponse])
+@router.get("", response_model=list[DocumentResponse])
 async def list_documents(
-    user_id: str,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
-) -> List[DocumentResponse]:
-    """Lists all uploaded documents for a specific user."""
-    user = await get_or_create_user(db, user_id)
+) -> list[DocumentResponse]:
     result = await db.execute(
-        select(Document).where(Document.user_id == user.id).order_by(Document.created_at.desc())
+        select(Document)
+        .where(Document.user_id == current_user_id)
+        .order_by(Document.created_at.desc())
     )
     return list(result.scalars().all())
+
+
+async def owned_document(
+    db: AsyncSession,
+    document_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> Document:
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.user_id == user_id,
+        )
+    )
+    document = result.scalar_one_or_none()
+    if document is None:
+        raise NotFoundError("Document not found")
+    return document
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
 async def get_document(
     document_id: uuid.UUID,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentResponse:
-    """Retrieves document details by ID."""
-    result = await db.execute(select(Document).where(Document.id == document_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise NotFoundError(f"Document '{document_id}' not found.")
-    return doc
+    return await owned_document(db, document_id, current_user_id)
 
 
 @router.get("/{document_id}/status", response_model=DocumentStatusResponse)
 async def get_document_status(
     document_id: uuid.UUID,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentStatusResponse:
-    """Gets processing status of a document."""
-    result = await db.execute(select(Document).where(Document.id == document_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise NotFoundError(f"Document '{document_id}' not found.")
+    document = await owned_document(db, document_id, current_user_id)
     return DocumentStatusResponse(
-        id=doc.id,
-        filename=doc.filename,
-        status=doc.status,
-        file_size=doc.file_size,
-        updated_at=doc.updated_at,
+        id=document.id,
+        filename=document.filename,
+        status=document.status,
+        file_size=document.file_size,
+        updated_at=document.updated_at,
     )
 
 
-@router.get("/{document_id}/chunks", response_model=List[DocumentChunkResponse])
+@router.get("/{document_id}/chunks", response_model=list[DocumentChunkResponse])
 async def get_document_chunks(
     document_id: uuid.UUID,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
-) -> List[DocumentChunkResponse]:
-    """Lists extracted text chunks for a document."""
+) -> list[DocumentChunkResponse]:
+    await owned_document(db, document_id, current_user_id)
     result = await db.execute(
-        select(DocumentChunk).where(DocumentChunk.document_id == document_id).order_by(DocumentChunk.chunk_index.asc())
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index.asc())
     )
     return list(result.scalars().all())
 
@@ -143,24 +172,17 @@ async def get_document_chunks(
 @router.post("/{document_id}/reprocess", response_model=DocumentResponse)
 async def reprocess_document(
     document_id: uuid.UUID,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentResponse:
-    """Reprocesses an existing document idempotently."""
-    ingestion = IngestionService(db)
-    return await ingestion.process_document(document_id)
+    await owned_document(db, document_id, current_user_id)
+    return await IngestionService(db).process_document(document_id, current_user_id)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     document_id: uuid.UUID,
-    user_id: str,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Deletes document and all related database records and Qdrant points."""
-    try:
-        user_uuid = uuid.UUID(user_id)
-    except ValueError:
-        raise ValidationError("Invalid user_id format.")
-
-    ingestion = IngestionService(db)
-    await ingestion.delete_document(document_id, user_uuid)
+    await IngestionService(db).delete_document(document_id, current_user_id)

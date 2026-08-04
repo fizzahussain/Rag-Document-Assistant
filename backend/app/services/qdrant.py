@@ -1,35 +1,41 @@
-from typing import Any, List, Optional
-import uuid
+from typing import Any
+
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as rest_models
+
 from backend.app.config import settings
 from backend.app.core.exceptions import VectorDBError
-from backend.app.core.logging import logger
 
 
 class QdrantService:
-    """Manages collection management, point indexing, and vector searching in Qdrant."""
-
-    def __init__(self, host: str = settings.QDRANT_HOST, port: int = settings.QDRANT_PORT, in_memory: bool = False):
-        if in_memory or host == ":memory:":
-            self.client = AsyncQdrantClient(":memory:")
+    def __init__(
+        self,
+        host: str | None = None,
+        port: int | None = None,
+        *,
+        in_memory: bool = False,
+    ) -> None:
+        resolved_host = host or settings.QDRANT_HOST
+        resolved_port = port or settings.QDRANT_PORT
+        api_key = settings.QDRANT_API_KEY.get_secret_value() if settings.QDRANT_API_KEY else None
+        if in_memory or resolved_host == ":memory:":
+            self.client = AsyncQdrantClient(location=":memory:")
         else:
             self.client = AsyncQdrantClient(
-                host=host,
-                port=port,
-                api_key=settings.QDRANT_API_KEY if settings.QDRANT_API_KEY else None,
-                timeout=10.0,
+                host=resolved_host,
+                port=resolved_port,
+                api_key=api_key,
+                timeout=settings.QDRANT_TIMEOUT_SECONDS,
             )
         self.collection_name = settings.QDRANT_COLLECTION
         self.dimension = settings.EMBEDDING_DIMENSION
 
-    async def init_collection(self) -> None:
-        """Creates the collection if it does not already exist."""
-        try:
-            collections = await self.client.get_collections()
-            collection_names = [c.name for c in collections.collections]
+    async def close(self) -> None:
+        await self.client.close()
 
-            if self.collection_name not in collection_names:
+    async def init_collection(self) -> None:
+        try:
+            if not await self.client.collection_exists(self.collection_name):
                 await self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=rest_models.VectorParams(
@@ -37,91 +43,128 @@ class QdrantService:
                         distance=rest_models.Distance.COSINE,
                     ),
                 )
-                logger.info("Created Qdrant collection", collection=self.collection_name, size=self.dimension)
-        except Exception as e:
-            logger.warning("Failed to check/create Qdrant collection, falling back to memory mode", error=str(e))
+                await self._create_payload_indexes()
+                return
 
-    async def upsert_points(self, points: List[rest_models.PointStruct]) -> None:
-        """Upserts a batch of chunk vectors and payload points into Qdrant."""
+            info = await self.client.get_collection(self.collection_name)
+            vectors = info.config.params.vectors
+            if isinstance(vectors, rest_models.VectorParams) and vectors.size != self.dimension:
+                raise VectorDBError(
+                    f"Qdrant dimension mismatch: expected {self.dimension}, found {vectors.size}"
+                )
+        except VectorDBError:
+            raise
+        except Exception as exc:
+            raise VectorDBError("Qdrant collection initialization failed") from exc
+
+    async def _create_payload_indexes(self) -> None:
+        for field_name in ("user_id", "document_id", "workspace_id"):
+            try:
+                await self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name=field_name,
+                    field_schema=rest_models.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                # Local in-memory Qdrant may not support persistent payload indexes
+                continue
+
+    async def upsert_points(self, points: list[rest_models.PointStruct]) -> None:
         if not points:
             return
+        await self.init_collection()
         try:
-            await self.init_collection()
             await self.client.upsert(
                 collection_name=self.collection_name,
                 points=points,
+                wait=True,
             )
-        except Exception as e:
-            raise VectorDBError(f"Failed to upsert vector points into Qdrant: {str(e)}")
+        except Exception as exc:
+            raise VectorDBError("Failed to index vector points") from exc
 
     async def search_points(
         self,
-        query_vector: List[float],
+        query_vector: list[float],
         user_id: str,
         limit: int = 5,
-        score_threshold: Optional[float] = None,
-        document_ids: Optional[List[str]] = None,
-        workspace_id: Optional[str] = None,
-    ) -> List[rest_models.ScoredPoint]:
-        """Executes vector search with strict payload filters."""
-        try:
-            await self.init_collection()
-
-            must_filters: List[Any] = [
+        score_threshold: float | None = None,
+        document_ids: list[str] | None = None,
+        workspace_id: str | None = None,
+    ) -> list[rest_models.ScoredPoint]:
+        if not user_id:
+            raise VectorDBError("A user filter is required for vector search")
+        await self.init_collection()
+        must_filters: list[Any] = [
+            rest_models.FieldCondition(
+                key="user_id",
+                match=rest_models.MatchValue(value=user_id),
+            )
+        ]
+        if document_ids:
+            must_filters.append(
                 rest_models.FieldCondition(
-                    key="user_id",
-                    match=rest_models.MatchValue(value=str(user_id)),
+                    key="document_id",
+                    match=rest_models.MatchAny(any=document_ids),
                 )
-            ]
-
-            if workspace_id:
-                must_filters.append(
-                    rest_models.FieldCondition(
-                        key="workspace_id",
-                        match=rest_models.MatchValue(value=str(workspace_id)),
-                    )
+            )
+        if workspace_id:
+            must_filters.append(
+                rest_models.FieldCondition(
+                    key="workspace_id",
+                    match=rest_models.MatchValue(value=workspace_id),
                 )
-
-            if document_ids:
-                must_filters.append(
-                    rest_models.FieldCondition(
-                        key="document_id",
-                        match=rest_models.MatchAny(any=[str(doc_id) for doc_id in document_ids]),
-                    )
-                )
-
-            query_filter = rest_models.Filter(must=must_filters)
-
-            res = await self.client.query_points(
+            )
+        try:
+            response = await self.client.query_points(
                 collection_name=self.collection_name,
                 query=query_vector,
-                query_filter=query_filter,
-                limit=limit,
+                query_filter=rest_models.Filter(must=must_filters),
+                limit=min(max(limit, 1), 100),
                 score_threshold=score_threshold,
+                with_payload=True,
             )
-            return res.points
-        except Exception as e:
-            raise VectorDBError(f"Failed to perform vector search in Qdrant: {str(e)}")
+            return list(response.points)
+        except Exception as exc:
+            raise VectorDBError("Failed to perform vector search") from exc
 
     async def delete_document_points(self, document_id: str, user_id: str) -> None:
-        """Deletes all points matching document_id and user_id."""
-        try:
-            await self.init_collection()
-            filter_condition = rest_models.Filter(
+        await self.init_collection()
+        selector = rest_models.FilterSelector(
+            filter=rest_models.Filter(
                 must=[
                     rest_models.FieldCondition(
                         key="document_id",
-                        match=rest_models.MatchValue(value=str(document_id)),
+                        match=rest_models.MatchValue(value=document_id),
                     ),
                     rest_models.FieldCondition(
                         key="user_id",
-                        match=rest_models.MatchValue(value=str(user_id)),
+                        match=rest_models.MatchValue(value=user_id),
                     ),
                 ]
             )
+        )
+        try:
             await self.client.delete(
                 collection_name=self.collection_name,
-                points_selector=rest_models.FilterSelector(filter=filter_condition),
+                points_selector=selector,
+                wait=True,
             )
-        except Exception as e:
-            raise VectorDBError(f"Failed to delete points for document '{document_id}': {str(e)}")
+        except Exception as exc:
+            raise VectorDBError("Failed to delete document vectors") from exc
+
+
+_shared_qdrant_service: QdrantService | None = None
+
+
+def get_qdrant_service() -> QdrantService:
+    global _shared_qdrant_service
+    if _shared_qdrant_service is None:
+        _shared_qdrant_service = QdrantService()
+    return _shared_qdrant_service
+
+
+async def close_qdrant_service() -> None:
+    global _shared_qdrant_service
+    if _shared_qdrant_service is not None:
+        await _shared_qdrant_service.close()
+        _shared_qdrant_service = None
