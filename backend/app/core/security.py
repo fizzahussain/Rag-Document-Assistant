@@ -96,8 +96,11 @@ def validate_file_extension(filename: str, allowed_extensions: list[str]) -> str
     extension = Path(filename).suffix.lstrip(".").lower()
     allowed = {item.lower() for item in allowed_extensions}
     if not extension or extension not in allowed:
+        allowed_extensions = ", ".join(sorted(allowed))
+
         raise ValidationError(
-            f"File extension '.{extension}' is not supported. Allowed extensions: {', '.join(sorted(allowed))}"
+            f"File extension '.{extension}' is not supported. "
+            f"Allowed extensions: {allowed_extensions}"
         )
     return extension
 
