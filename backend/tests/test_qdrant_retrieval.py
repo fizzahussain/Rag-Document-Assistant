@@ -9,12 +9,15 @@ from backend.app.models.user import User
 from backend.app.services.embedder import MockEmbeddingProvider
 from backend.app.services.qdrant import QdrantService
 from backend.app.services.retrieval import RetrievalService
+from backend.app.config import settings
 
 
 @pytest.mark.asyncio
 async def test_qdrant_search_hydrates_authoritative_database_text() -> None:
     qdrant = QdrantService(in_memory=True)
-    embedder = MockEmbeddingProvider(dimension=1536)
+    embedder = MockEmbeddingProvider(
+        dimension=settings.EMBEDDING_DIMENSION
+    )
     user_id = uuid.uuid4()
     document_id = uuid.uuid4()
     chunk_id = uuid.uuid4()
