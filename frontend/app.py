@@ -1,5 +1,7 @@
 import html
+import mimetypes
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -7,14 +9,57 @@ from typing import Any
 import gradio as gr
 import httpx
 
+
+def load_project_env() -> None:
+    """Load simple project environment values without overriding the shell"""
+
+    candidates = [
+        Path(__file__).resolve().parents[1] / ".env",
+        Path.cwd() / ".env",
+    ]
+    seen: set[Path] = set()
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen or not resolved.is_file():
+            continue
+        seen.add(resolved)
+
+        try:
+            lines = resolved.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if value[:1] == value[-1:] and value[:1] in {"'", '"'}:
+                value = value[1:-1]
+            if key:
+                os.environ.setdefault(key, value)
+
+
+load_project_env()
+
 BACKEND_URL = os.getenv(
     "BACKEND_URL",
     "http://127.0.0.1:8000/api/v1",
 ).rstrip("/")
 
 REQUEST_TIMEOUT = httpx.Timeout(timeout=240.0, connect=10.0)
+STT_TIMEOUT = httpx.Timeout(timeout=180.0, connect=10.0)
+STT_API_URL = os.getenv(
+    "STT_API_URL",
+    "https://api.openai.com/v1/audio/transcriptions",
+).rstrip("/")
+STT_API_KEY = os.getenv("STT_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+STT_MODEL = os.getenv("STT_MODEL", "gpt-4o-mini-transcribe")
 SUPPORTED_FILE_TYPES = [".pdf", ".docx", ".txt", ".md", ".json"]
-READY_STATUSES = {"ready", "completed", "indexed", "processed"}
+READY_STATUSES = {"ready", "completed", "complete", "indexed", "processed", "succeeded", "success", "available"}
 PROCESSING_STATUSES = {"processing", "pending", "queued", "uploading", "indexing"}
 
 EMPTY_STATE: dict[str, Any] = {
@@ -34,30 +79,31 @@ THEME = gr.themes.Soft(
 CSS = r"""
 :root {
     color-scheme: dark !important;
+    --cream: #f4e7d7;
+    --cream-soft: #ead8c4;
     --camel: #c6b39a;
+    --camel-deep: #a88f72;
     --boho: #7b694e;
     --rubine: #8d3a3c;
     --rubine-light: #ad5658;
     --tamarind: #3b1319;
     --italian-roast: #280b0f;
-    --page: #1f080b;
+    --page: #1c080b;
     --surface: #280b0f;
     --surface-raised: #351117;
     --surface-soft: #421820;
     --surface-hover: #51212a;
-    --line: #67333a;
-    --line-soft: rgba(198, 179, 154, .18);
-    --text: #f7ecdf;
-    --text-soft: #ead9c7;
+    --line: rgba(198, 179, 154, .20);
+    --line-strong: rgba(198, 179, 154, .36);
+    --text: #fff8ef;
+    --text-soft: #f0dfcc;
     --muted: #c6b39a;
-    --muted-deep: #a79379;
+    --muted-deep: #aa967d;
     --accent: #8d3a3c;
-    --accent-dark: #6f292d;
-    --accent-soft: rgba(141, 58, 60, .24);
-    --danger: #e48784;
-    --success: #b8c59a;
-    --warning: #d8b579;
-    --sidebar: #21080c;
+    --accent-hover: #a84c4f;
+    --danger: #f0aaa6;
+    --success: #bdd0a3;
+    --warning: #dfbd7f;
 }
 
 html,
@@ -78,6 +124,7 @@ body,
 .gradio-container {
     width: 100vw !important;
     max-width: none !important;
+    height: 100vh !important;
     min-height: 100vh !important;
     margin: 0 !important;
     padding: 0 !important;
@@ -100,18 +147,19 @@ footer {
     align-items: center !important;
     justify-content: center !important;
     background:
-        radial-gradient(circle at 15% 18%, rgba(141, 58, 60, .30), transparent 30%),
-        radial-gradient(circle at 84% 80%, rgba(123, 105, 78, .20), transparent 27%),
-        linear-gradient(145deg, #1d070a 0%, #280b0f 52%, #321017 100%) !important;
+        radial-gradient(circle at 15% 18%, rgba(141, 58, 60, .30), transparent 31%),
+        radial-gradient(circle at 84% 79%, rgba(123, 105, 78, .22), transparent 28%),
+        linear-gradient(145deg, #1b070a 0%, #280b0f 52%, #341017 100%) !important;
 }
 
 #auth-card {
     width: min(470px, calc(100vw - 40px)) !important;
-    padding: 34px !important;
-    border: 1px solid rgba(198, 179, 154, .26) !important;
-    border-radius: 24px !important;
+    padding: 36px !important;
+    border: 1px solid var(--line-strong) !important;
+    border-radius: 26px !important;
     background: rgba(59, 19, 25, .96) !important;
-    box-shadow: 0 30px 85px rgba(0, 0, 0, .48) !important;
+    box-shadow: 0 32px 90px rgba(0, 0, 0, .48) !important;
+    backdrop-filter: blur(14px);
 }
 
 #auth-card h1 {
@@ -129,15 +177,15 @@ footer {
 
 #auth-card input,
 #auth-card textarea {
-    border-color: rgba(198, 179, 154, .30) !important;
-    background: #280b0f !important;
+    border-color: var(--line-strong) !important;
+    background: var(--italian-roast) !important;
     color: var(--text) !important;
 }
 
 #auth-card button.primary {
-    border-color: rgba(198, 179, 154, .18) !important;
+    border-color: rgba(255, 248, 239, .10) !important;
     background: linear-gradient(135deg, var(--rubine), #6f292d) !important;
-    color: #fff8ef !important;
+    color: var(--text) !important;
 }
 
 .auth-copy {
@@ -148,11 +196,12 @@ footer {
 
 .auth-error {
     min-height: 24px !important;
-    color: #f0aaa6 !important;
+    color: var(--danger) !important;
     font-size: .92rem !important;
 }
 
 #workspace {
+    display: flex !important;
     width: 100vw !important;
     height: 100vh !important;
     min-height: 100vh !important;
@@ -163,108 +212,148 @@ footer {
 }
 
 #sidebar {
-    width: 320px !important;
-    min-width: 320px !important;
-    max-width: 320px !important;
+    display: flex !important;
+    flex: 0 0 342px !important;
+    flex-direction: column !important;
+    width: 342px !important;
+    min-width: 342px !important;
+    max-width: 342px !important;
     height: 100vh !important;
-    padding: 18px 16px !important;
-    overflow-x: hidden !important;
-    overflow-y: auto !important;
+    min-height: 0 !important;
+    padding: 17px 15px 14px !important;
+    overflow: hidden !important;
     background:
-        linear-gradient(180deg, #21080c 0%, #280b0f 55%, #1d070a 100%) !important;
-    border-right: 1px solid rgba(198, 179, 154, .16) !important;
+        radial-gradient(circle at 18% 4%, rgba(141, 58, 60, .20), transparent 27%),
+        linear-gradient(180deg, #23090d 0%, #280b0f 54%, #1c070a 100%) !important;
+    border-right: 1px solid var(--line) !important;
 }
 
-#sidebar::-webkit-scrollbar,
+#sidebar-scroll {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    margin-top: 8px !important;
+    padding-right: 5px !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+}
+
+#sidebar-scroll::-webkit-scrollbar,
 #document-cards::-webkit-scrollbar,
-#conversation-list::-webkit-scrollbar {
+#conversation-list::-webkit-scrollbar,
+#selected-documents::-webkit-scrollbar,
+#chatbot .messages::-webkit-scrollbar,
+#sources-panel::-webkit-scrollbar {
     width: 6px;
 }
 
-#sidebar::-webkit-scrollbar-thumb,
+#sidebar-scroll::-webkit-scrollbar-thumb,
 #document-cards::-webkit-scrollbar-thumb,
-#conversation-list::-webkit-scrollbar-thumb {
+#conversation-list::-webkit-scrollbar-thumb,
+#selected-documents::-webkit-scrollbar-thumb,
+#chatbot .messages::-webkit-scrollbar-thumb,
+#sources-panel::-webkit-scrollbar-thumb {
     border-radius: 999px;
     background: rgba(198, 179, 154, .24);
 }
 
 .brand {
-    padding: 4px 6px 12px !important;
+    flex: 0 0 auto !important;
+    padding: 4px 7px 10px !important;
 }
 
 .brand h2 {
     margin: 0 !important;
-    color: #fff8ef !important;
-    font-size: 1.16rem !important;
+    color: var(--text) !important;
+    font-size: 1.18rem !important;
     letter-spacing: -.025em !important;
 }
 
 .brand p {
     margin: 5px 0 0 !important;
     color: var(--camel) !important;
-    font-size: .82rem !important;
-}
-
-.sidebar-heading {
-    margin: 17px 4px 8px !important;
-    color: var(--camel) !important;
-    font-size: .71rem !important;
-    font-weight: 760 !important;
-    letter-spacing: .105em !important;
-    text-transform: uppercase !important;
+    font-size: .81rem !important;
 }
 
 #sidebar button {
     min-height: 38px !important;
-    border-radius: 10px !important;
-    font-weight: 650 !important;
+    border-radius: 11px !important;
+    font-weight: 680 !important;
     box-shadow: none !important;
 }
 
 #new-chat button,
 #upload-button button {
-    border: 1px solid rgba(198, 179, 154, .18) !important;
+    border: 1px solid rgba(255, 248, 239, .10) !important;
     background: linear-gradient(135deg, var(--rubine), #6f292d) !important;
-    color: #fff8ef !important;
+    color: var(--text) !important;
 }
 
 #new-chat button:hover,
 #upload-button button:hover {
-    background: linear-gradient(135deg, #a1494b, var(--rubine)) !important;
+    background: linear-gradient(135deg, var(--rubine-light), var(--rubine)) !important;
+}
+
+.sidebar-section {
+    margin-bottom: 12px !important;
+    padding: 13px !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 16px !important;
+    background: rgba(59, 19, 25, .56) !important;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .14) !important;
+}
+
+.section-title {
+    margin: 0 0 4px !important;
+    color: var(--cream) !important;
+    font-size: .84rem !important;
+    font-weight: 760 !important;
+    letter-spacing: -.01em !important;
+}
+
+.section-copy {
+    margin: 0 0 10px !important;
+    color: var(--camel) !important;
+    font-size: .72rem !important;
+    line-height: 1.45 !important;
 }
 
 #conversation-list {
-    max-height: 176px !important;
+    max-height: 208px !important;
     overflow-y: auto !important;
     padding: 2px !important;
 }
 
 #conversation-list label {
-    margin-bottom: 5px !important;
+    display: flex !important;
+    min-height: 42px !important;
+    margin: 0 0 6px !important;
     padding: 9px 10px !important;
+    align-items: center !important;
     border: 1px solid transparent !important;
-    border-radius: 10px !important;
-    background: transparent !important;
+    border-radius: 11px !important;
+    background: rgba(198, 179, 154, .055) !important;
     color: var(--text-soft) !important;
-    font-size: .84rem !important;
+    font-size: .78rem !important;
+    line-height: 1.35 !important;
 }
 
 #conversation-list label:hover {
-    background: rgba(198, 179, 154, .08) !important;
+    border-color: rgba(198, 179, 154, .16) !important;
+    background: rgba(198, 179, 154, .10) !important;
 }
 
 #conversation-list label:has(input:checked) {
-    border-color: rgba(198, 179, 154, .28) !important;
-    background: rgba(141, 58, 60, .34) !important;
-    color: #fff8ef !important;
+    border-color: rgba(173, 86, 88, .48) !important;
+    background: linear-gradient(135deg, rgba(141, 58, 60, .40), rgba(123, 105, 78, .17)) !important;
+    color: var(--text) !important;
 }
 
 #document-upload {
-    height: 106px !important;
-    min-height: 106px !important;
-    max-height: 106px !important;
+    height: 88px !important;
+    min-height: 88px !important;
+    max-height: 88px !important;
     overflow: hidden !important;
-    border: 1px dashed rgba(198, 179, 154, .38) !important;
+    border: 1px dashed var(--line-strong) !important;
     border-radius: 13px !important;
     background: rgba(198, 179, 154, .055) !important;
 }
@@ -274,35 +363,36 @@ footer {
 }
 
 #document-cards {
-    max-height: 222px !important;
-    margin-top: 10px !important;
+    max-height: 150px !important;
+    margin-top: 9px !important;
     overflow-y: auto !important;
+    background: transparent !important;
 }
 
 .document-card {
     display: grid;
-    grid-template-columns: 38px minmax(0, 1fr) auto;
-    gap: 10px;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    gap: 9px;
+    min-height: 54px;
+    margin-bottom: 7px;
+    padding: 9px;
     align-items: center;
-    margin-bottom: 8px;
-    padding: 10px;
-    border: 1px solid rgba(198, 179, 154, .16);
-    border-radius: 12px;
-    background: rgba(198, 179, 154, .055);
+    border: 1px solid rgba(198, 179, 154, .14);
+    border-radius: 11px;
+    background: rgba(40, 11, 15, .66);
 }
 
 .document-icon {
-    width: 38px;
-    height: 38px;
+    width: 34px;
+    height: 34px;
     display: grid;
     place-items: center;
-    border: 1px solid rgba(198, 179, 154, .20);
-    border-radius: 10px;
-    background: rgba(141, 58, 60, .22);
-    color: #f7ecdf;
-    font-size: .69rem;
-    font-weight: 800;
-    letter-spacing: .04em;
+    border: 1px solid rgba(198, 179, 154, .18);
+    border-radius: 9px;
+    background: rgba(123, 105, 78, .20);
+    color: var(--cream);
+    font-size: .63rem;
+    font-weight: 820;
 }
 
 .document-info {
@@ -311,9 +401,9 @@ footer {
 
 .document-name {
     overflow: hidden;
-    color: #fff8ef;
-    font-size: .82rem;
-    font-weight: 680;
+    color: var(--text);
+    font-size: .76rem;
+    font-weight: 690;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -322,7 +412,7 @@ footer {
     margin-top: 3px;
     overflow: hidden;
     color: var(--camel);
-    font-size: .71rem;
+    font-size: .65rem;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -332,27 +422,11 @@ footer {
     gap: 5px;
     align-items: center;
     padding: 4px 7px;
+    border: 1px solid rgba(198, 179, 154, .14);
     border-radius: 999px;
-    font-size: .66rem;
+    font-size: .61rem;
     font-weight: 760;
     white-space: nowrap;
-}
-
-.status-ready {
-    background: rgba(184, 197, 154, .14);
-    color: #d9e3bc;
-}
-
-.status-processing,
-.status-pending {
-    background: rgba(216, 181, 121, .15);
-    color: #f0ce93;
-}
-
-.status-failed,
-.status-error {
-    background: rgba(228, 135, 132, .16);
-    color: #f4aaa7;
 }
 
 .status-dot {
@@ -362,39 +436,72 @@ footer {
     background: currentColor;
 }
 
+.status-ready {
+    color: var(--success);
+    background: rgba(189, 208, 163, .08);
+}
+
+.status-processing,
+.status-pending {
+    color: var(--warning);
+    background: rgba(223, 189, 127, .08);
+}
+
+.status-failed {
+    color: var(--danger);
+    background: rgba(240, 170, 166, .08);
+}
+
 .status-processing .status-dot,
 .status-pending .status-dot {
     animation: statusPulse 1.15s ease-in-out infinite;
 }
 
 .document-empty {
-    padding: 15px 12px;
+    padding: 12px 10px;
     border: 1px dashed rgba(198, 179, 154, .20);
-    border-radius: 12px;
+    border-radius: 11px;
     color: var(--camel);
-    font-size: .78rem;
-    line-height: 1.45;
+    font-size: .72rem;
+    line-height: 1.42;
     text-align: center;
 }
 
-#selected-documents,
-#manage-document {
-    margin-top: 8px !important;
+#selected-documents {
+    max-height: 190px !important;
+    overflow-y: auto !important;
+    padding: 2px !important;
+}
+
+#selected-documents label {
+    margin: 0 0 6px !important;
+    padding: 8px 9px !important;
+    border: 1px solid rgba(198, 179, 154, .13) !important;
+    border-radius: 10px !important;
+    background: rgba(40, 11, 15, .56) !important;
+    color: var(--text-soft) !important;
+    font-size: .75rem !important;
+}
+
+#selected-documents label:has(input:checked) {
+    border-color: rgba(173, 86, 88, .52) !important;
+    background: rgba(141, 58, 60, .27) !important;
+    color: var(--text) !important;
 }
 
 #sidebar .form,
 #sidebar .block,
 #sidebar .wrap {
-    border-color: rgba(198, 179, 154, .18) !important;
-    background: rgba(198, 179, 154, .055) !important;
+    border-color: var(--line) !important;
+    background: rgba(198, 179, 154, .04) !important;
     color: var(--text-soft) !important;
 }
 
 #sidebar input,
 #sidebar textarea,
 #sidebar select {
-    color: #fff8ef !important;
-    background: var(--tamarind) !important;
+    color: var(--text) !important;
+    background: var(--italian-roast) !important;
 }
 
 #sidebar label,
@@ -411,8 +518,8 @@ footer {
 .sidebar-actions button,
 #refresh-documents button,
 #delete-conversation button {
-    border: 1px solid rgba(198, 179, 154, .18) !important;
-    background: rgba(198, 179, 154, .075) !important;
+    border: 1px solid var(--line) !important;
+    background: rgba(198, 179, 154, .07) !important;
     color: var(--text-soft) !important;
 }
 
@@ -422,82 +529,111 @@ footer {
     background: rgba(198, 179, 154, .13) !important;
 }
 
+#delete-document button,
 .danger-action button {
-    color: #f1b0ad !important;
+    border-color: rgba(240, 170, 166, .23) !important;
+    background: rgba(141, 58, 60, .20) !important;
+    color: #f6bfbc !important;
+}
+
+#document-actions {
+    margin-top: 8px !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 12px !important;
+    background: rgba(40, 11, 15, .52) !important;
+}
+
+#document-actions summary,
+#document-actions span,
+#document-actions p {
+    color: var(--text-soft) !important;
+}
+
+#account-area {
+    flex: 0 0 auto !important;
+    padding-top: 10px !important;
+    border-top: 1px solid var(--line) !important;
+    background: transparent !important;
 }
 
 #account-card {
-    margin-top: 16px !important;
-    padding: 12px 13px !important;
-    border: 1px solid rgba(198, 179, 154, .15) !important;
+    margin: 0 !important;
+    padding: 10px 12px !important;
+    border: 1px solid var(--line) !important;
     border-radius: 12px !important;
     background: rgba(198, 179, 154, .055) !important;
 }
 
 #account-card h3 {
     margin: 0 !important;
-    color: #fff8ef !important;
-    font-size: .92rem !important;
+    color: var(--cream) !important;
+    font-size: .87rem !important;
 }
 
 #account-card p {
-    margin: 3px 0 0 !important;
+    margin: 2px 0 0 !important;
     color: var(--camel) !important;
-    font-size: .78rem !important;
+    font-size: .72rem !important;
 }
 
 #logout button {
-    margin-top: 8px !important;
-    border: 1px solid rgba(198, 179, 154, .18) !important;
+    margin-top: 7px !important;
+    border: 1px solid var(--line) !important;
     background: transparent !important;
     color: var(--text-soft) !important;
 }
 
 #main-panel {
     position: relative !important;
+    display: flex !important;
+    flex: 1 1 auto !important;
+    flex-direction: column !important;
     min-width: 0 !important;
     height: 100vh !important;
+    min-height: 0 !important;
     padding: 0 !important;
-    overflow-y: auto !important;
+    overflow: hidden !important;
     background:
-        radial-gradient(circle at 50% 25%, rgba(141, 58, 60, .11), transparent 34%),
-        linear-gradient(180deg, #2b0d12 0%, #280b0f 54%, #23090d 100%) !important;
-}
-
-#main-panel > .gap,
-#main-panel > .form,
-#main-panel > .block,
-#main-panel > .wrap {
-    background: transparent !important;
+        radial-gradient(circle at 52% 18%, rgba(141, 58, 60, .13), transparent 35%),
+        radial-gradient(circle at 86% 72%, rgba(123, 105, 78, .08), transparent 30%),
+        linear-gradient(180deg, #2c0d12 0%, #280b0f 55%, #22090d 100%) !important;
 }
 
 #chat-header {
+    flex: 0 0 76px !important;
     min-height: 76px !important;
     padding: 0 30px !important;
     align-items: center !important;
-    border-bottom: 1px solid rgba(198, 179, 154, .16) !important;
+    border-bottom: 1px solid var(--line) !important;
     background: rgba(53, 17, 23, .97) !important;
-    box-shadow: 0 8px 25px rgba(0, 0, 0, .22) !important;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .20) !important;
 }
 
 #chat-header h3 {
     margin: 0 !important;
-    color: #fff8ef !important;
+    color: var(--text) !important;
     font-size: 1.06rem !important;
 }
 
 #chat-header p {
     margin: 3px 0 0 !important;
     color: var(--camel) !important;
-    font-size: .82rem !important;
+    font-size: .81rem !important;
+}
+
+#chat-stage {
+    position: relative !important;
+    display: flex !important;
+    flex: 1 1 auto !important;
+    flex-direction: column !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    background: transparent !important;
 }
 
 #empty-state-panel {
     position: absolute !important;
-    top: 76px !important;
-    right: 0 !important;
-    bottom: 140px !important;
-    left: 0 !important;
+    inset: 0 !important;
     z-index: 4 !important;
     display: grid !important;
     place-items: center !important;
@@ -509,31 +645,31 @@ footer {
 .empty-state-card {
     width: min(720px, 92%);
     padding: 30px;
-    border: 1px solid rgba(198, 179, 154, .18);
+    border: 1px solid var(--line);
     border-radius: 22px;
     background: rgba(59, 19, 25, .78);
-    box-shadow: 0 22px 65px rgba(0, 0, 0, .24);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .27);
     text-align: center;
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(12px);
 }
 
 .empty-eyebrow {
     color: var(--camel);
-    font-size: .72rem;
-    font-weight: 800;
+    font-size: .71rem;
+    font-weight: 810;
     letter-spacing: .13em;
     text-transform: uppercase;
 }
 
 .empty-state-card h2 {
     margin: 9px 0 8px;
-    color: #fff8ef;
-    font-size: clamp(1.6rem, 2.3vw, 2.2rem);
+    color: var(--text);
+    font-size: clamp(1.55rem, 2.2vw, 2.15rem);
     letter-spacing: -.035em;
 }
 
 .empty-state-card p {
-    max-width: 560px;
+    max-width: 570px;
     margin: 0 auto;
     color: var(--text-soft);
     line-height: 1.6;
@@ -544,34 +680,50 @@ footer {
     flex-wrap: wrap;
     gap: 9px;
     justify-content: center;
-    margin-top: 20px;
+    margin-top: 19px;
 }
 
 .prompt-pill {
     padding: 8px 12px;
     border: 1px solid rgba(198, 179, 154, .20);
     border-radius: 999px;
-    background: rgba(198, 179, 154, .075);
-    color: #ead9c7;
-    font-size: .79rem;
+    background: rgba(123, 105, 78, .20);
+    color: var(--cream-soft);
+    font-size: .78rem;
 }
 
-#chatbot,
+#chatbot {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: 100% !important;
+    max-height: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    overflow: hidden !important;
+}
+
 #chatbot > div,
 #chatbot .bubble-wrap,
 #chatbot .chatbot,
 #chatbot .messages,
 #chatbot .scroll-hide {
     width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
     border: 0 !important;
     border-radius: 0 !important;
     background: transparent !important;
 }
 
-#chatbot {
-    color: var(--text) !important;
+#chatbot .messages,
+#chatbot .scroll-hide {
+    overflow-y: auto !important;
+    padding: 18px 5vw 24px !important;
+    scroll-behavior: smooth;
 }
 
+#chatbot,
 #chatbot .message,
 #chatbot .message * {
     color: var(--text) !important;
@@ -579,7 +731,7 @@ footer {
 
 #chatbot .message {
     max-width: 860px !important;
-    border-radius: 17px !important;
+    border-radius: 18px !important;
     line-height: 1.64 !important;
     box-shadow: 0 11px 30px rgba(0, 0, 0, .18) !important;
 }
@@ -589,13 +741,13 @@ footer {
 #chatbot .user .message {
     border: 1px solid rgba(255, 248, 239, .10) !important;
     background: linear-gradient(135deg, var(--rubine), #6f292d) !important;
-    color: #fff8ef !important;
+    color: var(--text) !important;
 }
 
 #chatbot .message.user *,
 #chatbot [data-testid="user"] .message *,
 #chatbot .user .message * {
-    color: #fff8ef !important;
+    color: var(--text) !important;
 }
 
 #chatbot .message.bot,
@@ -604,9 +756,9 @@ footer {
 #chatbot [data-testid="assistant"] .message,
 #chatbot .bot .message,
 #chatbot .assistant .message {
-    border: 1px solid rgba(198, 179, 154, .18) !important;
+    border: 1px solid var(--line) !important;
     background: rgba(59, 19, 25, .96) !important;
-    color: #f7ecdf !important;
+    color: var(--text) !important;
 }
 
 #chatbot .message.bot *,
@@ -615,30 +767,33 @@ footer {
 #chatbot [data-testid="assistant"] .message *,
 #chatbot .bot .message *,
 #chatbot .assistant .message * {
-    color: #f7ecdf !important;
+    color: var(--text) !important;
 }
 
 #chatbot a {
-    color: #e7c7a3 !important;
+    color: #edcfae !important;
 }
 
 #chatbot code {
-    border: 1px solid rgba(198, 179, 154, .20) !important;
-    background: #23090d !important;
-    color: #f1dfca !important;
+    border: 1px solid var(--line) !important;
+    background: var(--italian-roast) !important;
+    color: var(--cream-soft) !important;
 }
 
 #chatbot pre {
-    border: 1px solid rgba(198, 179, 154, .20) !important;
-    background: #1d070a !important;
-    color: #f1dfca !important;
+    border: 1px solid var(--line) !important;
+    background: #1c070a !important;
+    color: var(--cream-soft) !important;
 }
 
 #sources-panel {
-    margin: 0 7vw 12px !important;
-    border: 1px solid rgba(198, 179, 154, .18) !important;
+    flex: 0 0 auto !important;
+    max-height: 180px !important;
+    margin: 0 24px 12px !important;
+    overflow-y: auto !important;
+    border: 1px solid var(--line) !important;
     border-radius: 14px !important;
-    background: rgba(59, 19, 25, .96) !important;
+    background: rgba(59, 19, 25, .98) !important;
     color: var(--text) !important;
 }
 
@@ -650,10 +805,10 @@ footer {
 }
 
 .source-card {
-    margin-bottom: 10px;
-    padding: 13px;
+    margin-bottom: 9px;
+    padding: 12px;
     border: 1px solid rgba(198, 179, 154, .17);
-    border-radius: 12px;
+    border-radius: 11px;
     background: rgba(40, 11, 15, .72);
 }
 
@@ -664,14 +819,14 @@ footer {
 }
 
 .source-name {
-    color: #fff8ef;
+    color: var(--cream);
     font-weight: 700;
 }
 
 .source-score,
 .source-location {
     color: var(--camel);
-    font-size: .81rem;
+    font-size: .8rem;
 }
 
 .source-excerpt {
@@ -680,14 +835,105 @@ footer {
     line-height: 1.52;
 }
 
+#composer-shell {
+    position: relative !important;
+    flex: 0 0 auto !important;
+    border-top: 1px solid var(--line) !important;
+    background: rgba(40, 11, 15, .985) !important;
+    box-shadow: 0 -14px 36px rgba(0, 0, 0, .24) !important;
+}
+
+#mention-menu {
+    position: absolute !important;
+    right: calc(5vw + 126px) !important;
+    bottom: 89px !important;
+    left: 5vw !important;
+    z-index: 40 !important;
+    max-height: 220px !important;
+    border: 1px solid var(--line-strong) !important;
+    border-radius: 14px !important;
+    background: var(--surface-raised) !important;
+    box-shadow: 0 22px 55px rgba(0, 0, 0, .40) !important;
+}
+
+#mention-menu * {
+    color: var(--text-soft) !important;
+}
+
+#voice-panel {
+    margin: 9px 5vw 0 !important;
+    padding: 11px 12px !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 14px !important;
+    background: rgba(59, 19, 25, .88) !important;
+}
+
+.voice-panel-head {
+    margin-bottom: 8px;
+}
+
+.voice-panel-title {
+    color: var(--cream);
+    font-size: .82rem;
+    font-weight: 740;
+}
+
+.voice-panel-copy {
+    margin-top: 3px;
+    color: var(--camel);
+    font-size: .7rem;
+    line-height: 1.4;
+}
+
+#voice-recorder {
+    min-height: 68px !important;
+    border: 1px solid rgba(198, 179, 154, .14) !important;
+    border-radius: 11px !important;
+    background: rgba(40, 11, 15, .72) !important;
+}
+
+#voice-recorder * {
+    color: var(--text-soft) !important;
+}
+
+#voice-status {
+    min-height: 22px !important;
+    margin-top: 5px !important;
+    background: transparent !important;
+}
+
+.voice-status {
+    display: inline-flex;
+    gap: 7px;
+    align-items: center;
+    color: var(--camel);
+    font-size: .72rem;
+}
+
+.voice-status.recording {
+    color: #f2b7b4;
+}
+
+.voice-status.transcribing {
+    color: var(--warning);
+}
+
+.voice-status.ready {
+    color: var(--success);
+}
+
+.voice-pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: statusPulse 1s ease-in-out infinite;
+}
+
 #selection-chips {
-    position: sticky !important;
-    bottom: 88px !important;
-    z-index: 8 !important;
-    min-height: 42px !important;
-    padding: 8px 7vw 4px !important;
-    border-top: 1px solid rgba(198, 179, 154, .12) !important;
-    background: rgba(40, 11, 15, .97) !important;
+    min-height: 34px !important;
+    padding: 7px 5vw 2px !important;
+    background: transparent !important;
 }
 
 .selection-row {
@@ -700,8 +946,8 @@ footer {
 .selection-label {
     margin-right: 2px;
     color: var(--camel);
-    font-size: .72rem;
-    font-weight: 760;
+    font-size: .7rem;
+    font-weight: 780;
     letter-spacing: .06em;
     text-transform: uppercase;
 }
@@ -709,32 +955,27 @@ footer {
 .document-chip {
     max-width: 220px;
     overflow: hidden;
-    padding: 6px 9px;
-    border: 1px solid rgba(198, 179, 154, .17);
+    padding: 5px 9px;
+    border: 1px solid rgba(198, 179, 154, .19);
     border-radius: 999px;
-    background: rgba(123, 105, 78, .22);
-    color: #ead9c7;
-    font-size: .76rem;
+    background: rgba(123, 105, 78, .23);
+    color: var(--cream-soft);
+    font-size: .74rem;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .selection-empty {
     color: var(--camel);
-    font-size: .77rem;
+    font-size: .75rem;
 }
 
 #composer {
-    position: sticky !important;
-    bottom: 0 !important;
-    z-index: 9 !important;
-    min-height: 88px !important;
-    padding: 12px 7vw 18px !important;
+    min-height: 80px !important;
+    padding: 8px 5vw 14px !important;
     align-items: end !important;
-    gap: 10px !important;
-    border-top: 1px solid rgba(198, 179, 154, .14) !important;
-    background: rgba(40, 11, 15, .98) !important;
-    box-shadow: 0 -12px 32px rgba(0, 0, 0, .25) !important;
+    gap: 9px !important;
+    background: transparent !important;
 }
 
 #question-input,
@@ -745,37 +986,60 @@ footer {
 }
 
 #question-input textarea {
-    min-height: 56px !important;
-    max-height: 120px !important;
-    padding: 15px 17px !important;
-    border: 1px solid rgba(198, 179, 154, .30) !important;
+    min-height: 54px !important;
+    max-height: 116px !important;
+    padding: 14px 17px !important;
+    border: 1px solid var(--line-strong) !important;
     border-radius: 16px !important;
     background: var(--tamarind) !important;
-    color: #fff8ef !important;
-    caret-color: #fff8ef !important;
+    color: var(--text) !important;
+    caret-color: var(--text) !important;
     box-shadow: 0 9px 25px rgba(0, 0, 0, .22) !important;
 }
 
 #question-input textarea::placeholder {
-    color: #bba991 !important;
+    color: #bba990 !important;
 }
 
 #question-input textarea:focus {
     border-color: var(--rubine-light) !important;
-    box-shadow: 0 0 0 3px rgba(141, 58, 60, .24) !important;
+    box-shadow: 0 0 0 3px rgba(141, 58, 60, .23) !important;
+}
+
+#mic-button button,
+#send-button button {
+    width: 54px !important;
+    min-width: 54px !important;
+    height: 54px !important;
+    min-height: 54px !important;
+    border-radius: 16px !important;
+    color: var(--text) !important;
+    font-size: 1.08rem !important;
+    box-shadow: 0 9px 24px rgba(0, 0, 0, .22) !important;
+}
+
+#mic-button button {
+    border: 1px solid var(--line-strong) !important;
+    background: rgba(123, 105, 78, .20) !important;
+}
+
+#mic-button button:hover {
+    background: rgba(123, 105, 78, .32) !important;
 }
 
 #send-button button {
-    width: 56px !important;
-    min-width: 56px !important;
-    height: 56px !important;
-    min-height: 56px !important;
-    border: 1px solid rgba(255, 248, 239, .12) !important;
-    border-radius: 16px !important;
+    border: 1px solid rgba(255, 248, 239, .10) !important;
     background: linear-gradient(135deg, var(--rubine), #6f292d) !important;
-    color: #fff8ef !important;
-    font-size: 1.12rem !important;
-    box-shadow: 0 9px 24px rgba(0, 0, 0, .22) !important;
+}
+
+#send-button button:hover {
+    background: linear-gradient(135deg, var(--rubine-light), var(--rubine)) !important;
+}
+
+#mic-button button:disabled,
+#send-button button:disabled {
+    opacity: .48 !important;
+    cursor: not-allowed !important;
 }
 
 .toast-anchor {
@@ -792,9 +1056,9 @@ footer {
     gap: 12px;
     align-items: flex-start;
     padding: 15px 17px;
-    border: 1px solid rgba(198, 179, 154, .25);
+    border: 1px solid var(--line-strong);
     border-radius: 15px;
-    background: #3b1319;
+    background: var(--tamarind);
     color: var(--text);
     box-shadow: 0 22px 55px rgba(0, 0, 0, .45);
     pointer-events: auto;
@@ -819,7 +1083,7 @@ footer {
 .toast strong {
     display: block;
     margin-bottom: 3px;
-    color: #fff8ef;
+    color: var(--text);
 }
 
 .toast span {
@@ -834,7 +1098,7 @@ footer {
     height: 24px;
     display: grid;
     place-items: center;
-    color: #fff8ef;
+    color: var(--text);
     font-weight: 800;
 }
 
@@ -872,22 +1136,227 @@ select,
     transition: none !important;
 }
 
-@media (max-width: 1050px) {
+@media (max-width: 1060px) {
     #sidebar {
-        width: 286px !important;
-        min-width: 286px !important;
-        max-width: 286px !important;
+        flex-basis: 308px !important;
+        width: 308px !important;
+        min-width: 308px !important;
+        max-width: 308px !important;
     }
 
-    #sources-panel {
-        margin-left: 22px !important;
-        margin-right: 22px !important;
-    }
-
+    #chatbot .messages,
     #selection-chips,
     #composer {
-        padding-left: 22px !important;
-        padding-right: 22px !important;
+        padding-left: 24px !important;
+        padding-right: 24px !important;
+    }
+
+    #voice-panel {
+        margin-left: 24px !important;
+        margin-right: 24px !important;
+    }
+
+    #mention-menu {
+        right: 150px !important;
+        left: 24px !important;
+    }
+}
+
+
+/* Stable application shell overrides */
+#sidebar > * {
+    min-height: 0 !important;
+}
+
+#new-chat {
+    flex: 0 0 44px !important;
+    width: 100% !important;
+    min-height: 44px !important;
+    max-height: 44px !important;
+    margin: 0 0 10px !important;
+    overflow: visible !important;
+}
+
+#new-chat button {
+    width: 100% !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    max-height: 44px !important;
+    padding: 0 14px !important;
+}
+
+#sidebar-scroll {
+    display: block !important;
+    flex: 1 1 0 !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    max-height: none !important;
+}
+
+#sidebar-scroll > *,
+.sidebar-section,
+#account-area {
+    flex: 0 0 auto !important;
+}
+
+.sidebar-section {
+    padding: 12px !important;
+    background:
+        linear-gradient(145deg, rgba(69, 25, 32, .88), rgba(45, 12, 17, .92)) !important;
+}
+
+#conversation-list {
+    min-height: 44px !important;
+    max-height: 196px !important;
+}
+
+#conversation-list > div,
+#selected-documents > div {
+    gap: 0 !important;
+}
+
+#document-cards {
+    max-height: 184px !important;
+}
+
+#selected-documents {
+    min-height: 42px !important;
+    max-height: 176px !important;
+}
+
+#manage-document {
+    flex: 0 0 auto !important;
+}
+
+#main-panel {
+    flex: 1 1 0 !important;
+    width: 0 !important;
+}
+
+#main-panel > * {
+    min-height: 0 !important;
+}
+
+#chat-stage {
+    flex: 1 1 0 !important;
+    height: 0 !important;
+    min-height: 0 !important;
+}
+
+#chatbot {
+    flex: 1 1 0 !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    max-height: none !important;
+}
+
+#chatbot > div,
+#chatbot .bubble-wrap,
+#chatbot .chatbot,
+#chatbot .messages,
+#chatbot .scroll-hide {
+    min-height: 0 !important;
+}
+
+#sources-panel {
+    flex: 0 0 auto !important;
+    max-height: 132px !important;
+}
+
+#composer-shell {
+    flex: 0 0 auto !important;
+    min-height: 92px !important;
+    max-height: 340px !important;
+    overflow: visible !important;
+}
+
+#mention-menu {
+    right: calc(5vw + 184px) !important;
+    bottom: 92px !important;
+    left: 5vw !important;
+    max-height: 248px !important;
+    padding: 10px !important;
+    overflow-y: auto !important;
+}
+
+#mention-menu > label,
+#mention-menu .label-wrap {
+    color: var(--camel) !important;
+    font-size: .72rem !important;
+    font-weight: 720 !important;
+}
+
+#mention-menu label {
+    display: flex !important;
+    min-height: 38px !important;
+    margin: 0 0 6px !important;
+    padding: 8px 10px !important;
+    align-items: center !important;
+    border: 1px solid rgba(198, 179, 154, .15) !important;
+    border-radius: 10px !important;
+    background: rgba(40, 11, 15, .82) !important;
+    color: var(--text-soft) !important;
+    cursor: pointer !important;
+}
+
+#mention-menu label:hover,
+#mention-menu label:has(input:checked) {
+    border-color: rgba(173, 86, 88, .56) !important;
+    background: rgba(141, 58, 60, .30) !important;
+    color: var(--text) !important;
+}
+
+#mention-button,
+#mic-button,
+#send-button {
+    flex: 0 0 54px !important;
+    width: 54px !important;
+    min-width: 54px !important;
+    max-width: 54px !important;
+}
+
+#mention-button button,
+#mic-button button,
+#send-button button {
+    width: 54px !important;
+    min-width: 54px !important;
+    max-width: 54px !important;
+    height: 54px !important;
+    min-height: 54px !important;
+    max-height: 54px !important;
+}
+
+#mention-button button {
+    border: 1px solid var(--line-strong) !important;
+    background: rgba(123, 105, 78, .20) !important;
+    color: var(--cream) !important;
+    font-size: 1rem !important;
+    font-weight: 820 !important;
+}
+
+#mention-button button:hover {
+    background: rgba(123, 105, 78, .34) !important;
+}
+
+#question-input {
+    min-width: 0 !important;
+}
+
+#question-input textarea {
+    width: 100% !important;
+}
+
+@media (max-width: 760px) {
+    #sidebar {
+        flex-basis: 288px !important;
+        width: 288px !important;
+        min-width: 288px !important;
+        max-width: 288px !important;
+    }
+
+    #mention-menu {
+        right: 18px !important;
+        left: 18px !important;
     }
 }
 """
@@ -1079,7 +1548,7 @@ def render_selected_chips(selected_ids: list[str] | None, catalog: dict[str, str
     selected = [safe_text(item) for item in (selected_ids or []) if safe_text(item)]
     names = catalog or {}
     if not selected:
-        return '<div class="selection-empty">No documents selected. The assistant will search all ready documents.</div>'
+        return '<div class="selection-empty">Using all ready documents. Type @ to choose a specific file.</div>'
 
     chips = []
     for document_id in selected:
@@ -1135,14 +1604,14 @@ def document_updates(
         document_id = safe_text(document.get("id"))
         if not document_id:
             continue
-        catalog[document_id] = filename
         manage_choices.append((filename, document_id))
         if is_ready(document):
+            catalog[document_id] = filename
             ready_choices.append((filename, document_id))
 
     ready_ids = [value for _, value in ready_choices]
     if selected_ids is None:
-        selected = ready_ids
+        selected = []
     else:
         selected = [value for value in selected_ids if value in ready_ids]
 
@@ -1510,7 +1979,7 @@ def delete_document(
     else:
         message = (
             toast("success", "Document deleted", "The file and its indexed content were removed.")
-            if response.status_code == 204
+            if response.status_code in {200, 204}
             else toast("error", "Delete failed", friendly_api_error(response))
         )
 
@@ -1552,7 +2021,7 @@ def reprocess_document(
     else:
         message = (
             toast("success", "Document refreshed", "The file was extracted and indexed again.")
-            if response.status_code == 200
+            if response.status_code in {200, 202}
             else toast("error", "Reprocessing failed", friendly_api_error(response))
         )
 
@@ -1652,7 +2121,7 @@ def delete_conversation(state: dict[str, Any] | None, conversation_id: str | Non
             toast("error", "Delete failed", backend_unavailable()),
         )
 
-    if response.status_code != 204:
+    if response.status_code not in {200, 204}:
         return (
             current,
             load_conversations(current),
@@ -1745,15 +2214,252 @@ def format_sources(raw_sources: list[dict[str, Any]]) -> str:
     return "".join(cards)
 
 
+def render_voice_status(kind: str = "idle", message: str | None = None) -> str:
+    messages = {
+        "idle": "Open the recorder, speak, then stop to convert your voice into text.",
+        "recording": "Recording… message sending is locked until you stop.",
+        "transcribing": "Transcribing your recording…",
+        "ready": "Transcript added to the prompt. Review it, then send.",
+        "error": "Voice input could not be transcribed.",
+    }
+    safe_kind = kind if kind in messages else "idle"
+    text = safe_text(message) or messages[safe_kind]
+    pulse = '<span class="voice-pulse"></span>' if safe_kind in {"recording", "transcribing"} else ""
+    return (
+        f'<div class="voice-status {safe_kind}">'
+        f"{pulse}<span>{html.escape(text)}</span></div>"
+    )
+
+
+def toggle_voice_panel(is_open: bool | None):
+    opened = not bool(is_open)
+    return opened, gr.update(visible=opened)
+
+
+def voice_recording_started():
+    return (
+        True,
+        gr.update(interactive=False),
+        gr.update(interactive=False),
+        gr.update(interactive=False),
+        render_voice_status("recording"),
+        gr.update(visible=False, value=None),
+        toast("working", "Listening", "Finish speaking and press stop before sending a message."),
+    )
+
+
+def transcribe_voice(audio_path: str | None, question: str | None):
+    current_question = safe_text(question)
+
+    yield (
+        True,
+        gr.update(value=current_question, interactive=False),
+        gr.update(interactive=False),
+        gr.update(interactive=False),
+        render_voice_status("transcribing"),
+        toast("working", "Transcribing", "Converting your recording into text."),
+        gr.update(),
+    )
+
+    path = Path(audio_path) if audio_path else None
+    if not path or not path.exists():
+        yield (
+            False,
+            gr.update(value=current_question, interactive=True),
+            gr.update(interactive=True),
+            gr.update(interactive=True),
+            render_voice_status("error", "No recording was received. Try recording again."),
+            toast("error", "No recording", "Record a voice prompt, then press stop."),
+            None,
+        )
+        return
+
+    api_key = STT_API_KEY
+    if not api_key and "api.openai.com" in STT_API_URL:
+        yield (
+            False,
+            gr.update(value=current_question, interactive=True),
+            gr.update(interactive=True),
+            gr.update(interactive=True),
+            render_voice_status("error", "Add OPENAI_API_KEY to your .env file to enable voice input."),
+            toast("error", "Voice input is not configured", "Add OPENAI_API_KEY to the project .env file."),
+            None,
+        )
+        return
+
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    mime_type = mimetypes.guess_type(path.name)[0] or "audio/wav"
+
+    try:
+        with path.open("rb") as audio_file:
+            response = httpx.post(
+                STT_API_URL,
+                headers=headers,
+                data={"model": STT_MODEL, "response_format": "json"},
+                files={"file": (path.name, audio_file, mime_type)},
+                timeout=STT_TIMEOUT,
+            )
+    except (OSError, httpx.HTTPError):
+        yield (
+            False,
+            gr.update(value=current_question, interactive=True),
+            gr.update(interactive=True),
+            gr.update(interactive=True),
+            render_voice_status("error", "The transcription service could not be reached."),
+            toast("error", "Transcription failed", "Check your internet connection and STT configuration."),
+            None,
+        )
+        return
+
+    if response.status_code not in {200, 201}:
+        message = friendly_api_error(response)
+        yield (
+            False,
+            gr.update(value=current_question, interactive=True),
+            gr.update(interactive=True),
+            gr.update(interactive=True),
+            render_voice_status("error", message),
+            toast("error", "Transcription failed", message),
+            None,
+        )
+        return
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    transcript = safe_text(payload.get("text"))
+    if not transcript:
+        yield (
+            False,
+            gr.update(value=current_question, interactive=True),
+            gr.update(interactive=True),
+            gr.update(interactive=True),
+            render_voice_status("error", "The service returned an empty transcript."),
+            toast("error", "Nothing was transcribed", "Try speaking more clearly or recording again."),
+            None,
+        )
+        return
+
+    merged = f"{current_question} {transcript}".strip() if current_question else transcript
+    yield (
+        False,
+        gr.update(value=merged, interactive=True),
+        gr.update(interactive=True),
+        gr.update(interactive=True),
+        render_voice_status("ready"),
+        toast("success", "Voice prompt ready", "The transcript was added to the message box."),
+        None,
+    )
+
+
+def ready_document_choices(catalog: dict[str, str] | None) -> list[tuple[str, str]]:
+    names = catalog or {}
+    return [
+        (f"@ {name}", document_id)
+        for document_id, name in sorted(names.items(), key=lambda item: item[1].lower())
+    ]
+
+
+def open_mention_menu(catalog: dict[str, str] | None):
+    choices = ready_document_choices(catalog)
+    if not choices:
+        return (
+            gr.update(visible=False, choices=[], value=None),
+            toast("info", "No ready documents", "Upload a document or wait for processing to finish."),
+        )
+    return (
+        gr.update(visible=True, choices=choices, value=None),
+        "",
+    )
+
+
+def mention_suggestions(question: str | None, catalog: dict[str, str] | None):
+    text = "" if question is None else str(question)
+    match = re.search(r"(^|\s)@([^@\s]*)$", text)
+    names = catalog or {}
+
+    if not match or not names:
+        return gr.update(visible=False, choices=[], value=None)
+
+    query = match.group(2).strip().lower()
+    choices = [
+        (f"@ {name}", document_id)
+        for document_id, name in sorted(names.items(), key=lambda item: item[1].lower())
+        if not query or query in name.lower()
+    ][:12]
+
+    return gr.update(
+        visible=bool(choices),
+        choices=choices,
+        value=None,
+    )
+
+
+def apply_document_mention(
+    question: str | None,
+    selected_ids: list[str] | None,
+    mentioned_document_id: str | None,
+    catalog: dict[str, str] | None,
+):
+    text = "" if question is None else str(question)
+    document_id = safe_text(mentioned_document_id)
+    names = catalog or {}
+    name = names.get(document_id)
+
+    if not document_id or not name:
+        return (
+            text,
+            gr.update(),
+            render_selected_chips(selected_ids, names),
+            gr.update(visible=False, value=None),
+        )
+
+    match = re.search(r"(^|\s)@([^@\s]*)$", text)
+    if match:
+        prefix = text[: match.start()]
+        leading = match.group(1)
+        updated_text = f"{prefix}{leading}@{name} "
+    else:
+        spacer = "" if not text or text.endswith((" ", "\n")) else " "
+        updated_text = f"{text}{spacer}@{name} "
+
+    selected = [safe_text(item) for item in (selected_ids or []) if safe_text(item)]
+    if document_id not in selected:
+        selected.append(document_id)
+
+    return (
+        updated_text,
+        gr.update(value=selected),
+        render_selected_chips(selected, names),
+        gr.update(visible=False, value=None),
+    )
+
+
 def ask_question(
     state: dict[str, Any] | None,
     question: str | None,
     selected_documents: list[str] | None,
     history: list[dict[str, str]] | None,
+    voice_busy: bool | None,
 ):
     current = state or empty_state()
     clean_question = safe_text(question)
     current_history = history or []
+
+    if voice_busy:
+        yield (
+            current,
+            safe_text(question),
+            current_history,
+            "",
+            gr.update(visible=False),
+            gr.update(visible=not bool(current_history)),
+            toast("info", "Finish voice input", "Stop the recording and wait for transcription before sending."),
+            load_conversations(current),
+        )
+        return
 
     if not current.get("access_token"):
         yield (
@@ -1893,6 +2599,8 @@ with gr.Blocks(
 ) as demo:
     auth_state = gr.State(empty_state())
     document_catalog = gr.State({})
+    voice_busy_state = gr.State(False)
+    voice_panel_state = gr.State(False)
     toast_box = gr.HTML("", elem_classes=["toast-anchor"])
 
     with gr.Row(
@@ -1907,7 +2615,7 @@ with gr.Blocks(
         ):
             gr.Markdown("# Document Assistant")
             gr.Markdown(
-                "A private workspace for asking grounded questions about your own documents.",
+                "A private workspace for grounded conversations with your documents.",
                 elem_classes=["auth-copy"],
             )
             auth_mode = gr.Radio(
@@ -1953,7 +2661,7 @@ with gr.Blocks(
     ) as workspace:
         with gr.Column(
             scale=0,
-            min_width=320,
+            min_width=342,
             elem_id="sidebar",
         ):
             gr.Markdown(
@@ -1962,78 +2670,98 @@ with gr.Blocks(
             )
 
             new_chat_button = gr.Button(
-                "＋ New chat",
+                "＋ New conversation",
                 variant="primary",
+                scale=0,
                 elem_id="new-chat",
             )
 
-            gr.Markdown("Conversations", elem_classes=["sidebar-heading"])
-            conversation_list = gr.Radio(
-                choices=[],
-                value=None,
-                label="",
-                show_label=False,
-                container=False,
-                elem_id="conversation-list",
-            )
-            delete_conversation_button = gr.Button(
-                "Delete selected chat",
-                elem_id="delete-conversation",
-                elem_classes=["danger-action"],
-            )
+            with gr.Column(scale=1, min_width=0, elem_id="sidebar-scroll"):
+                with gr.Column(elem_classes=["sidebar-section"]):
+                    gr.HTML(
+                        '<div class="section-title">Conversations</div>'
+                        '<div class="section-copy">Everything stays here. Select a chat without leaving the workspace.</div>'
+                    )
+                    conversation_list = gr.Radio(
+                        choices=[],
+                        value=None,
+                        label="",
+                        show_label=False,
+                        container=False,
+                        elem_id="conversation-list",
+                    )
+                    delete_conversation_button = gr.Button(
+                        "Delete selected conversation",
+                        elem_id="delete-conversation",
+                        elem_classes=["danger-action"],
+                    )
 
-            gr.Markdown("Documents", elem_classes=["sidebar-heading"])
-            upload_files = gr.File(
-                label="Drop files or browse",
-                show_label=False,
-                container=False,
-                file_count="multiple",
-                file_types=SUPPORTED_FILE_TYPES,
-                type="filepath",
-                height=106,
-                elem_id="document-upload",
-            )
-            upload_button = gr.Button(
-                "Upload documents",
-                variant="primary",
-                elem_id="upload-button",
-            )
-            document_cards = gr.HTML(
-                render_document_cards([]),
-                elem_id="document-cards",
-            )
-            refresh_documents_button = gr.Button(
-                "Refresh document status",
-                elem_id="refresh-documents",
-            )
+                with gr.Column(elem_classes=["sidebar-section"]):
+                    gr.HTML(
+                        '<div class="section-title">Document library</div>'
+                        '<div class="section-copy">Upload files, see their status, and choose exactly what this chat can use.</div>'
+                    )
+                    upload_files = gr.File(
+                        label="Drop files or browse",
+                        show_label=False,
+                        container=False,
+                        file_count="multiple",
+                        file_types=SUPPORTED_FILE_TYPES,
+                        type="filepath",
+                        height=88,
+                        elem_id="document-upload",
+                    )
+                    upload_button = gr.Button(
+                        "Upload documents",
+                        variant="primary",
+                        elem_id="upload-button",
+                    )
+                    document_cards = gr.HTML(
+                        render_document_cards([]),
+                        elem_id="document-cards",
+                    )
+                    refresh_documents_button = gr.Button(
+                        "Refresh processing status",
+                        elem_id="refresh-documents",
+                    )
 
-            gr.Markdown("Use in answers", elem_classes=["sidebar-heading"])
-            selected_documents = gr.Dropdown(
-                choices=[],
-                value=[],
-                multiselect=True,
-                allow_custom_value=False,
-                label="Selected documents",
-                show_label=False,
-                container=False,
-                elem_id="selected-documents",
-            )
+                    gr.HTML(
+                        '<div class="section-title" style="margin-top:13px !important;">Use in this chat</div>'
+                        '<div class="section-copy">Tick files here or type @ in the message box. No selection means all ready files.</div>'
+                    )
+                    selected_documents = gr.CheckboxGroup(
+                        choices=[],
+                        value=[],
+                        label="",
+                        show_label=False,
+                        container=False,
+                        elem_id="selected-documents",
+                    )
 
-            manage_document = gr.Dropdown(
-                choices=[],
-                value=None,
-                label="Document actions",
-                elem_id="manage-document",
-            )
-            with gr.Row(elem_classes=["sidebar-actions"]):
-                reprocess_document_button = gr.Button("Reprocess")
-                delete_document_button = gr.Button(
-                    "Delete",
-                    elem_classes=["danger-action"],
-                )
+                    with gr.Accordion(
+                        "Document actions",
+                        open=False,
+                        elem_id="document-actions",
+                    ):
+                        manage_document = gr.Dropdown(
+                            choices=[],
+                            value=None,
+                            label="Choose a document",
+                            show_label=False,
+                            container=False,
+                            elem_id="manage-document",
+                        )
+                        with gr.Row(elem_classes=["sidebar-actions"]):
+                            reprocess_document_button = gr.Button("Reprocess")
+                            delete_document_button = gr.Button(
+                                "Delete document",
+                                elem_id="delete-document",
+                                elem_classes=["danger-action"],
+                            )
 
-            account_summary = gr.Markdown("", elem_id="account-card")
-            logout_button = gr.Button("Log out", elem_id="logout")
+            with gr.Column(scale=0, elem_id="account-area"):
+                account_summary = gr.Markdown("", elem_id="account-card")
+                logout_button = gr.Button("Log out", elem_id="logout")
 
         with gr.Column(
             scale=1,
@@ -2043,65 +2771,113 @@ with gr.Blocks(
             with gr.Row(elem_id="chat-header"):
                 gr.Markdown(
                     "### Chat with your documents\n"
-                    "Grounded answers with the sources shown beneath each response"
+                    "Messages, sources, document mentions, and voice input stay in one fixed workspace"
                 )
 
-            empty_panel = gr.HTML(
-                render_empty_state([]),
-                visible=True,
-                elem_id="empty-state-panel",
-            )
+            with gr.Column(scale=1, min_width=0, elem_id="chat-stage"):
+                empty_panel = gr.HTML(
+                    render_empty_state([]),
+                    visible=True,
+                    elem_id="empty-state-panel",
+                )
 
-            chatbot = gr.Chatbot(
-                value=[],
-                label="",
-                show_label=False,
-                container=False,
-                height="calc(100vh - 248px)",
-                min_height=420,
-                max_height="calc(100vh - 248px)",
-                placeholder="",
-                buttons=["copy", "copy_all"],
-                autoscroll=True,
-                layout="bubble",
-                feedback_options=None,
-                group_consecutive_messages=False,
-                elem_id="chatbot",
-            )
-
-            with gr.Accordion(
-                "Source details",
-                open=False,
-                visible=False,
-                elem_id="sources-panel",
-            ) as sources_panel:
-                sources_html = gr.HTML("")
-
-            selection_chips = gr.HTML(
-                render_selected_chips([], {}),
-                elem_id="selection-chips",
-            )
-
-            with gr.Row(elem_id="composer"):
-                question_input = gr.Textbox(
+                chatbot = gr.Chatbot(
+                    value=[],
                     label="",
                     show_label=False,
                     container=False,
-                    placeholder="Ask about your documents…",
-                    lines=1,
-                    max_lines=4,
-                    value="",
-                    autofocus=True,
-                    scale=12,
-                    elem_id="question-input",
+                    height="100%",
+                    min_height=0,
+                    placeholder="",
+                    buttons=["copy", "copy_all"],
+                    autoscroll=True,
+                    layout="bubble",
+                    feedback_options=None,
+                    group_consecutive_messages=False,
+                    elem_id="chatbot",
                 )
-                send_button = gr.Button(
-                    "➜",
-                    variant="primary",
-                    scale=0,
-                    min_width=56,
-                    elem_id="send-button",
+
+                with gr.Accordion(
+                    "Sources used for the latest answer",
+                    open=False,
+                    visible=False,
+                    elem_id="sources-panel",
+                ) as sources_panel:
+                    sources_html = gr.HTML("")
+
+            with gr.Column(scale=0, elem_id="composer-shell"):
+                mention_menu = gr.Radio(
+                    choices=[],
+                    value=None,
+                    label="Choose a ready document",
+                    show_label=True,
+                    container=True,
+                    visible=False,
+                    elem_id="mention-menu",
                 )
+
+                with gr.Column(visible=False, elem_id="voice-panel") as voice_panel:
+                    gr.HTML(
+                        '<div class="voice-panel-head">'
+                        '<div class="voice-panel-title">Voice prompt</div>'
+                        '<div class="voice-panel-copy">Record your question and press stop. Sending is locked while you are speaking or while the transcript is being prepared.</div>'
+                        '</div>'
+                    )
+                    voice_recorder = gr.Audio(
+                        sources=["microphone"],
+                        type="filepath",
+                        format="wav",
+                        label="",
+                        show_label=False,
+                        container=False,
+                        interactive=True,
+                        buttons=[],
+                        elem_id="voice-recorder",
+                    )
+                    voice_status = gr.HTML(
+                        render_voice_status(),
+                        elem_id="voice-status",
+                    )
+
+                selection_chips = gr.HTML(
+                    render_selected_chips([], {}),
+                    elem_id="selection-chips",
+                )
+
+                with gr.Row(elem_id="composer"):
+                    mention_button = gr.Button(
+                        "@",
+                        variant="secondary",
+                        scale=0,
+                        min_width=54,
+                        elem_id="mention-button",
+                    )
+                    mic_button = gr.Button(
+                        "🎙",
+                        variant="secondary",
+                        scale=0,
+                        min_width=54,
+                        elem_id="mic-button",
+                    )
+                    question_input = gr.Textbox(
+                        label="",
+                        show_label=False,
+                        container=False,
+                        placeholder="Ask about your documents…  Type @ to choose a file",
+                        lines=1,
+                        max_lines=4,
+                        value="",
+                        autofocus=True,
+                        scale=12,
+                        elem_id="question-input",
+                    )
+                    send_button = gr.Button(
+                        "➜",
+                        variant="primary",
+                        scale=0,
+                        min_width=54,
+                        elem_id="send-button",
+                    )
 
     auth_mode.change(
         auth_mode_changed,
@@ -2227,6 +3003,67 @@ with gr.Blocks(
         show_progress="hidden",
     )
 
+    mention_button.click(
+        open_mention_menu,
+        inputs=[document_catalog],
+        outputs=[mention_menu, toast_box],
+        show_progress="hidden",
+        queue=False,
+    )
+
+    question_input.input(
+        mention_suggestions,
+        inputs=[question_input, document_catalog],
+        outputs=[mention_menu],
+        show_progress="hidden",
+        trigger_mode="always_last",
+        queue=False,
+    )
+
+    mention_menu.change(
+        apply_document_mention,
+        inputs=[question_input, selected_documents, mention_menu, document_catalog],
+        outputs=[question_input, selected_documents, selection_chips, mention_menu],
+        show_progress="hidden",
+        queue=False,
+    )
+
+    mic_button.click(
+        toggle_voice_panel,
+        inputs=[voice_panel_state],
+        outputs=[voice_panel_state, voice_panel],
+        show_progress="hidden",
+    )
+
+    voice_recorder.start_recording(
+        voice_recording_started,
+        outputs=[
+            voice_busy_state,
+            question_input,
+            send_button,
+            mic_button,
+            voice_status,
+            mention_menu,
+            toast_box,
+        ],
+        show_progress="hidden",
+    )
+
+    voice_recorder.stop_recording(
+        transcribe_voice,
+        inputs=[voice_recorder, question_input],
+        outputs=[
+            voice_busy_state,
+            question_input,
+            send_button,
+            mic_button,
+            voice_status,
+            toast_box,
+            voice_recorder,
+        ],
+        show_progress="hidden",
+    )
+
     new_chat_button.click(
         new_chat,
         inputs=[auth_state],
@@ -2265,7 +3102,13 @@ with gr.Blocks(
 
     send_button.click(
         ask_question,
-        inputs=[auth_state, question_input, selected_documents, chatbot],
+        inputs=[
+            auth_state,
+            question_input,
+            selected_documents,
+            chatbot,
+            voice_busy_state,
+        ],
         outputs=[
             auth_state,
             question_input,
@@ -2281,7 +3124,13 @@ with gr.Blocks(
 
     question_input.submit(
         ask_question,
-        inputs=[auth_state, question_input, selected_documents, chatbot],
+        inputs=[
+            auth_state,
+            question_input,
+            selected_documents,
+            chatbot,
+            voice_busy_state,
+        ],
         outputs=[
             auth_state,
             question_input,
