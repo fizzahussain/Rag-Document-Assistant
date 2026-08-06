@@ -1,23 +1,24 @@
 import uuid
 
 import pytest
+from qdrant_client.http import models as rest_models
 
-from backend.app.config import settings
 from backend.app.database import AsyncSessionLocal
 from backend.app.models.document import Document, DocumentChunk
 from backend.app.models.user import User
 from backend.app.services.embedder import MockEmbeddingProvider
+from backend.app.services.qdrant import QdrantService
 from backend.app.services.retrieval import RetrievalService
 
 
 @pytest.mark.asyncio
-async def test_pgvector_search_returns_owned_database_chunks() -> None:
-    embedder = MockEmbeddingProvider(dimension=settings.EMBEDDING_DIMENSION)
+async def test_qdrant_search_hydrates_authoritative_database_text() -> None:
+    qdrant = QdrantService(in_memory=True)
+    embedder = MockEmbeddingProvider(dimension=1536)
     user_id = uuid.uuid4()
     document_id = uuid.uuid4()
     chunk_id = uuid.uuid4()
     text = "PostgreSQL is a powerful open source relational database system."
-    vector = await embedder.embed_query(text)
 
     async with AsyncSessionLocal() as db:
         db.add(User(id=user_id, workspace_id=str(uuid.uuid4())))
@@ -41,12 +42,26 @@ async def test_pgvector_search_returns_owned_database_chunks() -> None:
                 page_number=1,
                 text_content=text,
                 chunk_hash="b" * 64,
-                embedding=vector,
+                qdrant_point_id=chunk_id,
             )
         )
         await db.commit()
 
-        retrieval = RetrievalService(db, embedder=embedder)
+        vector = await embedder.embed_query(text)
+        await qdrant.upsert_points(
+            [
+                rest_models.PointStruct(
+                    id=str(chunk_id),
+                    vector=vector,
+                    payload={
+                        "document_id": str(document_id),
+                        "chunk_id": str(chunk_id),
+                        "user_id": str(user_id),
+                    },
+                )
+            ]
+        )
+        retrieval = RetrievalService(db, qdrant_service=qdrant, embedder=embedder)
         results = await retrieval.search(
             query="relational database system",
             user_id=user_id,
