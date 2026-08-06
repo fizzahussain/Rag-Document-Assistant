@@ -10,7 +10,6 @@ from backend.app.config import settings
 from backend.app.core.exceptions import RAGException
 from backend.app.core.logging import logger, setup_logging
 from backend.app.database import close_database
-from backend.app.services.qdrant import close_qdrant_service
 
 setup_logging()
 
@@ -18,7 +17,6 @@ setup_logging()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
-    await close_qdrant_service()
     await close_database()
 
 
