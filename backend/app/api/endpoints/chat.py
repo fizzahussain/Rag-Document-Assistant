@@ -22,24 +22,16 @@ from backend.app.services.retrieval import RetrievalService
 router = APIRouter(tags=["Chat"])
 
 
-async def ensure_user(db: AsyncSession, user_id: uuid.UUID) -> User:
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        user = User(id=user_id, workspace_id=str(uuid.uuid4()))
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-    return user
-
-
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
     current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> ChatResponse:
-    user = await ensure_user(db, current_user_id)
+    user_result = await db.execute(select(User).where(User.id == current_user_id))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise NotFoundError("User account not found")
     if request.conversation_id:
         result = await db.execute(
             select(Conversation).where(
@@ -115,7 +107,9 @@ async def create_conversation(
     current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationResponse:
-    await ensure_user(db, current_user_id)
+    user_result = await db.execute(select(User.id).where(User.id == current_user_id))
+    if user_result.scalar_one_or_none() is None:
+        raise NotFoundError("User account not found")
     conversation = Conversation(user_id=current_user_id, title=request.title)
     db.add(conversation)
     await db.commit()

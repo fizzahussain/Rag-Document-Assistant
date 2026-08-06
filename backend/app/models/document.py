@@ -1,9 +1,11 @@
 import uuid
 from datetime import UTC, datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from backend.app.config import settings
 from backend.app.models.base import Base
 
 
@@ -60,11 +62,9 @@ class DocumentChunk(Base):
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     text_content: Mapped[str] = mapped_column(Text, nullable=False)
     chunk_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    qdrant_point_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True),
-        nullable=False,
-        default=uuid.uuid4,
-        index=True,
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(settings.EMBEDDING_DIMENSION),
+        nullable=True,
     )
 
     document = relationship("Document", back_populates="chunks")

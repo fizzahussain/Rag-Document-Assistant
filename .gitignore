@@ -78,3 +78,7 @@ transformers/
 
 # Anti-Gravity / IDE metadata
 .system_generated/
+backend/.env
+*.pyc
+storage/
+uploads/

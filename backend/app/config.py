@@ -24,12 +24,6 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres_password@localhost:5432/rag_db"
     DB_ECHO: bool = False
 
-    QDRANT_HOST: str = "localhost"
-    QDRANT_PORT: int = 6333
-    QDRANT_API_KEY: SecretStr | None = None
-    QDRANT_COLLECTION: str = "rag_chunks"
-    QDRANT_TIMEOUT_SECONDS: float = 10.0
-
     UPLOAD_DIR: str = "./data/uploads"
     MAX_UPLOAD_SIZE_MB: int = 10
     UPLOAD_BLOCK_SIZE_BYTES: int = 1024 * 1024
@@ -51,6 +45,9 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "gpt-4o-mini"
     OPENAI_API_KEY: SecretStr | None = None
 
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_TIMEOUT_SECONDS: float = 120.0
+
     AUTH_SECRET_KEY: SecretStr = SecretStr("change-me-in-production")
     ACCESS_TOKEN_TTL_SECONDS: int = 86400
     DEV_USER_ID: str = "00000000-0000-0000-0000-000000000001"
@@ -63,19 +60,40 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
+
                 if isinstance(parsed, list):
                     return [str(item) for item in parsed]
             except json.JSONDecodeError:
                 return [item.strip() for item in value.split(",") if item.strip()]
+
         return list(value)
+
+    @field_validator("EMBEDDING_PROVIDER", "LLM_PROVIDER")
+    @classmethod
+    def validate_provider(cls, value: str) -> str:
+        provider = value.strip().lower()
+        supported_providers = {"mock", "openai", "ollama"}
+
+        if provider not in supported_providers:
+            supported = ", ".join(sorted(supported_providers))
+            raise ValueError(f"Unsupported provider '{provider}'. Expected one of: {supported}")
+
+        return provider
+
+    @field_validator("OLLAMA_BASE_URL")
+    @classmethod
+    def clean_ollama_base_url(cls, value: str) -> str:
+        return value.strip().rstrip("/")
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
         if self.APP_ENV.lower() == "production":
             if self.AUTH_SECRET_KEY.get_secret_value() == "change-me-in-production":
                 raise ValueError("AUTH_SECRET_KEY must be configured in production")
+
             if self.DATABASE_URL.startswith("sqlite"):
                 raise ValueError("SQLite is not supported in production")
+
         return self
 
 
