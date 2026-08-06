@@ -1,6 +1,6 @@
 import os
-from pathlib import Path
 from collections.abc import Generator
+from pathlib import Path
 
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./data/test_rag.sqlite"
