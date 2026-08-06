@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Application configuration loaded from environment variables"""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -48,31 +50,64 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_TIMEOUT_SECONDS: float = 120.0
 
+    TRANSCRIPTION_PROVIDER: str = "faster-whisper"
+    TRANSCRIPTION_MODEL: str = "small"
+    TRANSCRIPTION_DEVICE: str = "cpu"
+    TRANSCRIPTION_COMPUTE_TYPE: str = "int8"
+    TRANSCRIPTION_LANGUAGE: str | None = None
+    TRANSCRIPTION_BEAM_SIZE: int = 5
+    TRANSCRIPTION_TIMEOUT_SECONDS: float = 180.0
+    MAX_AUDIO_SIZE_MB: int = 25
+    ALLOWED_AUDIO_EXTENSIONS: str | list[str] = [
+        "wav",
+        "mp3",
+        "m4a",
+        "ogg",
+        "webm",
+        "flac",
+    ]
+
     AUTH_SECRET_KEY: SecretStr = SecretStr("change-me-in-production")
     ACCESS_TOKEN_TTL_SECONDS: int = 86400
     DEV_USER_ID: str = "00000000-0000-0000-0000-000000000001"
 
     LOG_LEVEL: str = "INFO"
 
-    @field_validator("ALLOWED_ORIGINS", "ALLOWED_EXTENSIONS", mode="before")
+    @field_validator(
+        "ALLOWED_ORIGINS",
+        "ALLOWED_EXTENSIONS",
+        "ALLOWED_AUDIO_EXTENSIONS",
+        mode="before",
+    )
     @classmethod
     def parse_string_list(cls, value: str | list[str]) -> list[str]:
+        """Parse JSON arrays or comma-separated environment values"""
+
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
 
                 if isinstance(parsed, list):
-                    return [str(item) for item in parsed]
+                    return [str(item).strip() for item in parsed if str(item).strip()]
             except json.JSONDecodeError:
                 return [item.strip() for item in value.split(",") if item.strip()]
 
-        return list(value)
+        return [str(item).strip() for item in value if str(item).strip()]
 
-    @field_validator("EMBEDDING_PROVIDER", "LLM_PROVIDER")
+    @field_validator(
+        "EMBEDDING_PROVIDER",
+        "LLM_PROVIDER",
+    )
     @classmethod
-    def validate_provider(cls, value: str) -> str:
+    def validate_ai_provider(cls, value: str) -> str:
+        """Validate embedding and language-model providers"""
+
         provider = value.strip().lower()
-        supported_providers = {"mock", "openai", "ollama"}
+        supported_providers = {
+            "mock",
+            "openai",
+            "ollama",
+        }
 
         if provider not in supported_providers:
             supported = ", ".join(sorted(supported_providers))
@@ -80,13 +115,97 @@ class Settings(BaseSettings):
 
         return provider
 
+    @field_validator("TRANSCRIPTION_PROVIDER")
+    @classmethod
+    def validate_transcription_provider(cls, value: str) -> str:
+        """Validate the configured speech-to-text provider"""
+
+        provider = value.strip().lower()
+        supported_providers = {
+            "faster-whisper",
+            "disabled",
+        }
+
+        if provider not in supported_providers:
+            supported = ", ".join(sorted(supported_providers))
+            raise ValueError(
+                f"Unsupported transcription provider '{provider}'. Expected one of: {supported}"
+            )
+
+        return provider
+
     @field_validator("OLLAMA_BASE_URL")
     @classmethod
     def clean_ollama_base_url(cls, value: str) -> str:
+        """Normalize the Ollama service URL"""
+
         return value.strip().rstrip("/")
 
+    @field_validator(
+        "ALLOWED_EXTENSIONS",
+        "ALLOWED_AUDIO_EXTENSIONS",
+    )
+    @classmethod
+    def normalize_extensions(cls, value: list[str]) -> list[str]:
+        """Normalize configured file extensions"""
+
+        normalized: list[str] = []
+
+        for extension in value:
+            clean_extension = extension.strip().lower().lstrip(".")
+
+            if clean_extension and clean_extension not in normalized:
+                normalized.append(clean_extension)
+
+        return normalized
+
+    @field_validator("TRANSCRIPTION_DEVICE")
+    @classmethod
+    def validate_transcription_device(cls, value: str) -> str:
+        """Validate the faster-whisper execution device"""
+
+        device = value.strip().lower()
+
+        if device not in {
+            "cpu",
+            "cuda",
+            "auto",
+        }:
+            raise ValueError("TRANSCRIPTION_DEVICE must be one of: auto, cpu, cuda")
+
+        return device
+
+    @field_validator("TRANSCRIPTION_COMPUTE_TYPE")
+    @classmethod
+    def clean_compute_type(cls, value: str) -> str:
+        """Normalize the faster-whisper compute type"""
+
+        compute_type = value.strip().lower()
+
+        if not compute_type:
+            raise ValueError("TRANSCRIPTION_COMPUTE_TYPE must not be empty")
+
+        return compute_type
+
+    @field_validator("TRANSCRIPTION_LANGUAGE")
+    @classmethod
+    def clean_transcription_language(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        """Normalize an optional transcription language code"""
+
+        if value is None:
+            return None
+
+        language = value.strip().lower()
+
+        return language or None
+
     @model_validator(mode="after")
-    def validate_production_settings(self) -> "Settings":
+    def validate_settings(self) -> "Settings":
+        """Validate cross-field configuration rules"""
+
         if self.APP_ENV.lower() == "production":
             if self.AUTH_SECRET_KEY.get_secret_value() == "change-me-in-production":
                 raise ValueError("AUTH_SECRET_KEY must be configured in production")
@@ -94,11 +213,25 @@ class Settings(BaseSettings):
             if self.DATABASE_URL.startswith("sqlite"):
                 raise ValueError("SQLite is not supported in production")
 
+        if self.MAX_UPLOAD_SIZE_MB <= 0:
+            raise ValueError("MAX_UPLOAD_SIZE_MB must be greater than zero")
+
+        if self.MAX_AUDIO_SIZE_MB <= 0:
+            raise ValueError("MAX_AUDIO_SIZE_MB must be greater than zero")
+
+        if self.TRANSCRIPTION_BEAM_SIZE <= 0:
+            raise ValueError("TRANSCRIPTION_BEAM_SIZE must be greater than zero")
+
+        if self.TRANSCRIPTION_TIMEOUT_SECONDS <= 0:
+            raise ValueError("TRANSCRIPTION_TIMEOUT_SECONDS must be greater than zero")
+
         return self
 
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return the cached application settings"""
+
     return Settings()
 
 
