@@ -86,3 +86,8 @@ warn_unused_configs = true
 check_untyped_defs = true
 ignore_missing_imports = true
 exclude = ["backend/migrations/"]
+
+
+[tool.ruff.lint.per-file-ignores]
+"frontend/app.py" = ["E501"]
+"backend/tests/conftest.py" = ["E402"]

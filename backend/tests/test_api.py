@@ -1,5 +1,7 @@
 import io
+
 from fastapi.testclient import TestClient
+
 
 def signup_headers(client: TestClient, email: str) -> dict[str, str]:
     response = client.post(
@@ -19,7 +21,7 @@ def test_health_endpoint(client: TestClient) -> None:
 def test_readiness_endpoint(client: TestClient) -> None:
     response = client.get("/api/v1/ready")
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "ready"
+    assert response.json()["status"] == "healthy"
 
 
 def test_protected_endpoint_requires_token(client: TestClient) -> None:

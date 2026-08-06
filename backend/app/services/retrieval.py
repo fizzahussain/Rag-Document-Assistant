@@ -102,8 +102,7 @@ class RetrievalService:
 
         ranked.sort(key=lambda item: item[0], reverse=True)
         return [
-            self._to_source(chunk, document, score)
-            for score, chunk, document in ranked[:limit]
+            self._to_source(chunk, document, score) for score, chunk, document in ranked[:limit]
         ]
 
     @staticmethod

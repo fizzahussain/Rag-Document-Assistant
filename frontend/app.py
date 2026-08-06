@@ -2,7 +2,7 @@ import html
 import mimetypes
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +59,16 @@ STT_API_URL = os.getenv(
 STT_API_KEY = os.getenv("STT_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 STT_MODEL = os.getenv("STT_MODEL", "gpt-4o-mini-transcribe")
 SUPPORTED_FILE_TYPES = [".pdf", ".docx", ".txt", ".md", ".json"]
-READY_STATUSES = {"ready", "completed", "complete", "indexed", "processed", "succeeded", "success", "available"}
+READY_STATUSES = {
+    "ready",
+    "completed",
+    "complete",
+    "indexed",
+    "processed",
+    "succeeded",
+    "success",
+    "available",
+}
 PROCESSING_STATUSES = {"processing", "pending", "queued", "uploading", "indexing"}
 
 EMPTY_STATE: dict[str, Any] = {
@@ -1440,7 +1449,9 @@ def friendly_api_error(response: httpx.Response) -> str:
         if clean and not any(word in clean.lower() for word in blocked):
             return clean
 
-    return defaults.get(response.status_code, "The request could not be completed. Please try again.")
+    return defaults.get(
+        response.status_code, "The request could not be completed. Please try again."
+    )
 
 
 def backend_unavailable() -> str:
@@ -1466,7 +1477,7 @@ def parse_api_datetime(value: Any) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
@@ -1522,9 +1533,7 @@ def render_document_cards(documents: list[dict[str, Any]]) -> str:
             else "pending"
         )
         size = format_file_size(
-            document.get("size_bytes")
-            or document.get("file_size")
-            or document.get("size")
+            document.get("size_bytes") or document.get("file_size") or document.get("size")
         )
         updated = parse_api_datetime(document.get("updated_at") or document.get("created_at"))
         date_label = updated.strftime("%d %b %Y") if updated else ""
@@ -1553,13 +1562,21 @@ def render_selected_chips(selected_ids: list[str] | None, catalog: dict[str, str
     chips = []
     for document_id in selected:
         name = names.get(document_id, "Selected document")
-        chips.append(f'<span class="document-chip" title="{html.escape(name)}">{html.escape(name)}</span>')
-    return '<div class="selection-row"><span class="selection-label">Using</span>' + "".join(chips) + "</div>"
+        chips.append(
+            f'<span class="document-chip" title="{html.escape(name)}">{html.escape(name)}</span>'
+        )
+    return (
+        '<div class="selection-row"><span class="selection-label">Using</span>'
+        + "".join(chips)
+        + "</div>"
+    )
 
 
 def render_empty_state(documents: list[dict[str, Any]]) -> str:
     ready_count = sum(1 for document in documents if is_ready(document))
-    processing_count = sum(1 for document in documents if document_status(document) in PROCESSING_STATUSES)
+    processing_count = sum(
+        1 for document in documents if document_status(document) in PROCESSING_STATUSES
+    )
 
     if ready_count:
         description = (
@@ -1574,7 +1591,9 @@ def render_empty_state(documents: list[dict[str, Any]]) -> str:
         )
         eyebrow = "Indexing in progress"
     else:
-        description = "Upload a document from the sidebar to build your private searchable knowledge space."
+        description = (
+            "Upload a document from the sidebar to build your private searchable knowledge space."
+        )
         eyebrow = "Start here"
 
     return (
@@ -1642,8 +1661,8 @@ def conversation_group(item: dict[str, Any]) -> str:
     timestamp = parse_api_datetime(item.get("updated_at") or item.get("created_at"))
     if not timestamp:
         return "Older"
-    today = datetime.now(timezone.utc).date()
-    delta = (today - timestamp.astimezone(timezone.utc).date()).days
+    today = datetime.now(UTC).date()
+    delta = (today - timestamp.astimezone(UTC).date()).days
     if delta <= 0:
         return "Today"
     if delta == 1:
@@ -1659,7 +1678,10 @@ def conversation_updates(conversations: list[dict[str, Any]], selected: str | No
         conversations,
         key=lambda item: (
             order.get(conversation_group(item), 4),
-            -(parse_api_datetime(item.get("updated_at") or item.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)).timestamp(),
+            -(
+                parse_api_datetime(item.get("updated_at") or item.get("created_at"))
+                or datetime.min.replace(tzinfo=UTC)
+            ).timestamp(),
         ),
     )
     choices = [
@@ -1997,7 +2019,10 @@ def reprocess_document(
     clean_id = safe_text(document_id)
     if not clean_id:
         outputs = load_documents(current, selected_ids)
-        yield (*outputs, toast("info", "Choose a document", "Select a file before reprocessing it."))
+        yield (
+            *outputs,
+            toast("info", "Choose a document", "Select a file before reprocessing it."),
+        )
         return
 
     outputs = load_documents(current, selected_ids)
@@ -2063,13 +2088,21 @@ def load_conversation(state: dict[str, Any] | None, conversation_id: str | None)
             timeout=REQUEST_TIMEOUT,
         )
     except httpx.HTTPError:
-        return current, [], gr.update(visible=False), gr.update(visible=True), toast(
-            "error", "Could not load chat", backend_unavailable()
+        return (
+            current,
+            [],
+            gr.update(visible=False),
+            gr.update(visible=True),
+            toast("error", "Could not load chat", backend_unavailable()),
         )
 
     if response.status_code != 200:
-        return current, [], gr.update(visible=False), gr.update(visible=True), toast(
-            "error", "Could not load chat", friendly_api_error(response)
+        return (
+            current,
+            [],
+            gr.update(visible=False),
+            gr.update(visible=True),
+            toast("error", "Could not load chat", friendly_api_error(response)),
         )
 
     data = response.json()
@@ -2144,7 +2177,24 @@ def delete_conversation(state: dict[str, Any] | None, conversation_id: str | Non
 
 def escape_markdown(value: str) -> str:
     escaped = value
-    for character in ("\\", "`", "*", "_", "{", "}", "[", "]", "<", ">", "#", "+", "-", ".", "!", "|"):
+    for character in (
+        "\\",
+        "`",
+        "*",
+        "_",
+        "{",
+        "}",
+        "[",
+        "]",
+        "<",
+        ">",
+        "#",
+        "+",
+        "-",
+        ".",
+        "!",
+        "|",
+    ):
         escaped = escaped.replace(character, f"\\{character}")
     return escaped
 
@@ -2186,9 +2236,7 @@ def format_sources(raw_sources: list[dict[str, Any]]) -> str:
         filename = html.escape(safe_text(source.get("filename")) or "Document")
         location = html.escape(source_location(source))
         excerpt = safe_text(
-            source.get("text_content")
-            or source.get("text")
-            or source.get("content")
+            source.get("text_content") or source.get("text") or source.get("content")
         )
         if len(excerpt) > 420:
             excerpt = excerpt[:420].rstrip() + "…"
@@ -2204,11 +2252,7 @@ def format_sources(raw_sources: list[dict[str, Any]]) -> str:
             f'<span class="source-score">{html.escape(score_label)}</span>'
             "</div>"
             f'<div class="source-location">{location}</div>'
-            + (
-                f'<p class="source-excerpt">{html.escape(excerpt)}</p>'
-                if excerpt
-                else ""
-            )
+            + (f'<p class="source-excerpt">{html.escape(excerpt)}</p>' if excerpt else "")
             + "</div>"
         )
     return "".join(cards)
@@ -2224,11 +2268,10 @@ def render_voice_status(kind: str = "idle", message: str | None = None) -> str:
     }
     safe_kind = kind if kind in messages else "idle"
     text = safe_text(message) or messages[safe_kind]
-    pulse = '<span class="voice-pulse"></span>' if safe_kind in {"recording", "transcribing"} else ""
-    return (
-        f'<div class="voice-status {safe_kind}">'
-        f"{pulse}<span>{html.escape(text)}</span></div>"
+    pulse = (
+        '<span class="voice-pulse"></span>' if safe_kind in {"recording", "transcribing"} else ""
     )
+    return f'<div class="voice-status {safe_kind}">{pulse}<span>{html.escape(text)}</span></div>'
 
 
 def toggle_voice_panel(is_open: bool | None):
@@ -2281,8 +2324,14 @@ def transcribe_voice(audio_path: str | None, question: str | None):
             gr.update(value=current_question, interactive=True),
             gr.update(interactive=True),
             gr.update(interactive=True),
-            render_voice_status("error", "Add OPENAI_API_KEY to your .env file to enable voice input."),
-            toast("error", "Voice input is not configured", "Add OPENAI_API_KEY to the project .env file."),
+            render_voice_status(
+                "error", "Add OPENAI_API_KEY to your .env file to enable voice input."
+            ),
+            toast(
+                "error",
+                "Voice input is not configured",
+                "Add OPENAI_API_KEY to the project .env file.",
+            ),
             None,
         )
         return
@@ -2306,7 +2355,11 @@ def transcribe_voice(audio_path: str | None, question: str | None):
             gr.update(interactive=True),
             gr.update(interactive=True),
             render_voice_status("error", "The transcription service could not be reached."),
-            toast("error", "Transcription failed", "Check your internet connection and STT configuration."),
+            toast(
+                "error",
+                "Transcription failed",
+                "Check your internet connection and STT configuration.",
+            ),
             None,
         )
         return
@@ -2337,7 +2390,9 @@ def transcribe_voice(audio_path: str | None, question: str | None):
             gr.update(interactive=True),
             gr.update(interactive=True),
             render_voice_status("error", "The service returned an empty transcript."),
-            toast("error", "Nothing was transcribed", "Try speaking more clearly or recording again."),
+            toast(
+                "error", "Nothing was transcribed", "Try speaking more clearly or recording again."
+            ),
             None,
         )
         return
@@ -2367,7 +2422,9 @@ def open_mention_menu(catalog: dict[str, str] | None):
     if not choices:
         return (
             gr.update(visible=False, choices=[], value=None),
-            toast("info", "No ready documents", "Upload a document or wait for processing to finish."),
+            toast(
+                "info", "No ready documents", "Upload a document or wait for processing to finish."
+            ),
         )
     return (
         gr.update(visible=True, choices=choices, value=None),
@@ -2456,7 +2513,11 @@ def ask_question(
             "",
             gr.update(visible=False),
             gr.update(visible=not bool(current_history)),
-            toast("info", "Finish voice input", "Stop the recording and wait for transcription before sending."),
+            toast(
+                "info",
+                "Finish voice input",
+                "Stop the recording and wait for transcription before sending.",
+            ),
             load_conversations(current),
         )
         return
@@ -2490,7 +2551,10 @@ def ask_question(
     working_history = [
         *current_history,
         {"role": "user", "content": clean_question},
-        {"role": "assistant", "content": "Searching your documents and preparing a grounded answer…"},
+        {
+            "role": "assistant",
+            "content": "Searching your documents and preparing a grounded answer…",
+        },
     ]
     yield (
         current,
@@ -2576,8 +2640,7 @@ def ask_question(
     ]
     updated = {
         **current,
-        "conversation_id": safe_text(data.get("conversation_id"))
-        or current.get("conversation_id"),
+        "conversation_id": safe_text(data.get("conversation_id")) or current.get("conversation_id"),
     }
 
     yield (
@@ -2670,7 +2733,7 @@ with gr.Blocks(
             )
 
             new_chat_button = gr.Button(
-                "＋ New conversation",
+                "+ New conversation",
                 variant="primary",
                 scale=0,
                 elem_id="new-chat",
@@ -2821,7 +2884,7 @@ with gr.Blocks(
                         '<div class="voice-panel-head">'
                         '<div class="voice-panel-title">Voice prompt</div>'
                         '<div class="voice-panel-copy">Record your question and press stop. Sending is locked while you are speaking or while the transcript is being prepared.</div>'
-                        '</div>'
+                        "</div>"
                     )
                     voice_recorder = gr.Audio(
                         sources=["microphone"],
