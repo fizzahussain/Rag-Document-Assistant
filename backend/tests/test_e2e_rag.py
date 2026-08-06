@@ -1,14 +1,14 @@
 import io
-import uuid
-
 from fastapi.testclient import TestClient
-
-from backend.app.core.security import create_access_token
 
 
 def test_document_lifecycle_is_idempotent_and_isolated(client: TestClient) -> None:
-    user_id = uuid.uuid4()
-    headers = {"Authorization": f"Bearer {create_access_token(str(user_id))}"}
+    signup = client.post(
+        "/api/v1/auth/signup",
+        json={"name": "E2E User", "email": "e2e@example.com", "password": "password123"},
+    )
+    assert signup.status_code == 201, signup.text
+    headers = {"Authorization": f"Bearer {signup.json()['access_token']}"}
     upload = client.post(
         "/api/v1/documents/upload",
         files={
