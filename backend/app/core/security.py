@@ -82,6 +82,32 @@ async def get_current_user_id(
         ) from exc
 
 
+
+def hash_password(password: str) -> str:
+    """Hash a password with PBKDF2 and a random salt"""
+    if len(password) < 8:
+        raise ValidationError("Password must be at least 8 characters")
+    salt = os.urandom(16)
+    iterations = 600_000
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return f"pbkdf2_sha256${iterations}${base64.urlsafe_b64encode(salt).decode()}${base64.urlsafe_b64encode(digest).decode()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    """Verify a password against a PBKDF2 hash"""
+    try:
+        algorithm, raw_iterations, raw_salt, raw_digest = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        iterations = int(raw_iterations)
+        salt = base64.urlsafe_b64decode(raw_salt.encode())
+        expected = base64.urlsafe_b64decode(raw_digest.encode())
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+
 def calculate_sha256(file_bytes: bytes) -> str:
     return hashlib.sha256(file_bytes).hexdigest()
 

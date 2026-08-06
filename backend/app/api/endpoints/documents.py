@@ -23,17 +23,6 @@ from backend.app.services.storage import StorageService
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
 
-async def ensure_user(db: AsyncSession, user_id: uuid.UUID) -> User:
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        user = User(id=user_id, workspace_id=str(uuid.uuid4()))
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-    return user
-
-
 async def validate_detectable_content(path: str, extension: str) -> None:
     data = await anyio.Path(path).read_bytes()
     if extension == "pdf" and not data.startswith(b"%PDF-"):
@@ -61,7 +50,10 @@ async def upload_document(
         file.filename or "",
         list(settings.ALLOWED_EXTENSIONS),
     )
-    user = await ensure_user(db, current_user_id)
+    user_result = await db.execute(select(User).where(User.id == current_user_id))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise NotFoundError("User account not found")
     storage = StorageService()
     stored = await storage.save_upload(str(user.id), file)
     try:

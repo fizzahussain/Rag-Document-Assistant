@@ -1,11 +1,14 @@
 import os
+from pathlib import Path
 from collections.abc import Generator
 
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./data/test_rag.sqlite"
-os.environ["QDRANT_HOST"] = ":memory:"
 os.environ["AUTH_SECRET_KEY"] = "test-only-secret"
 os.environ["UPLOAD_DIR"] = "./data/test_uploads"
+Path("./data").mkdir(exist_ok=True)
+os.environ["EMBEDDING_PROVIDER"] = "mock"
+os.environ["LLM_PROVIDER"] = "mock"
 
 import pytest
 from fastapi.testclient import TestClient
