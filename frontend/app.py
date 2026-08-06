@@ -1,5 +1,6 @@
 import html
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,8 @@ BACKEND_URL = os.getenv(
 
 REQUEST_TIMEOUT = httpx.Timeout(timeout=240.0, connect=10.0)
 SUPPORTED_FILE_TYPES = [".pdf", ".docx", ".txt", ".md", ".json"]
+READY_STATUSES = {"ready", "completed", "indexed", "processed"}
+PROCESSING_STATUSES = {"processing", "pending", "queued", "uploading", "indexing"}
 
 EMPTY_STATE: dict[str, Any] = {
     "access_token": "",
@@ -21,9 +24,9 @@ EMPTY_STATE: dict[str, Any] = {
 }
 
 THEME = gr.themes.Soft(
-    primary_hue="indigo",
-    secondary_hue="slate",
-    neutral_hue="slate",
+    primary_hue="red",
+    secondary_hue="stone",
+    neutral_hue="stone",
     radius_size="md",
     text_size="md",
 )
@@ -31,24 +34,30 @@ THEME = gr.themes.Soft(
 CSS = r"""
 :root {
     color-scheme: dark !important;
-    --page: #08111f;
-    --surface: #0d1728;
-    --surface-raised: #132036;
-    --surface-soft: #1a2940;
-    --surface-hover: #22334d;
-    --line: #2b3b55;
-    --line-strong: #3b4f6f;
-    --text: #f8fafc;
-    --text-soft: #d9e3f0;
-    --muted: #9fb0c7;
-    --accent: #6d5dfc;
-    --accent-dark: #5746ea;
-    --accent-soft: rgba(109, 93, 252, .18);
-    --danger: #fb7185;
-    --success: #34d399;
-    --warning: #fbbf24;
-    --sidebar: #070d18;
-    --sidebar-soft: #111b2d;
+    --camel: #c6b39a;
+    --boho: #7b694e;
+    --rubine: #8d3a3c;
+    --rubine-light: #ad5658;
+    --tamarind: #3b1319;
+    --italian-roast: #280b0f;
+    --page: #1f080b;
+    --surface: #280b0f;
+    --surface-raised: #351117;
+    --surface-soft: #421820;
+    --surface-hover: #51212a;
+    --line: #67333a;
+    --line-soft: rgba(198, 179, 154, .18);
+    --text: #f7ecdf;
+    --text-soft: #ead9c7;
+    --muted: #c6b39a;
+    --muted-deep: #a79379;
+    --accent: #8d3a3c;
+    --accent-dark: #6f292d;
+    --accent-soft: rgba(141, 58, 60, .24);
+    --danger: #e48784;
+    --success: #b8c59a;
+    --warning: #d8b579;
+    --sidebar: #21080c;
 }
 
 html,
@@ -91,18 +100,18 @@ footer {
     align-items: center !important;
     justify-content: center !important;
     background:
-        radial-gradient(circle at 14% 16%, rgba(109, 93, 252, .22), transparent 28%),
-        radial-gradient(circle at 84% 82%, rgba(14, 165, 233, .16), transparent 25%),
-        var(--page) !important;
+        radial-gradient(circle at 15% 18%, rgba(141, 58, 60, .30), transparent 30%),
+        radial-gradient(circle at 84% 80%, rgba(123, 105, 78, .20), transparent 27%),
+        linear-gradient(145deg, #1d070a 0%, #280b0f 52%, #321017 100%) !important;
 }
 
 #auth-card {
     width: min(470px, calc(100vw - 40px)) !important;
     padding: 34px !important;
-    border: 1px solid var(--line) !important;
+    border: 1px solid rgba(198, 179, 154, .26) !important;
     border-radius: 24px !important;
-    background: rgba(19, 32, 54, .98) !important;
-    box-shadow: 0 28px 80px rgba(0, 0, 0, .38) !important;
+    background: rgba(59, 19, 25, .96) !important;
+    box-shadow: 0 30px 85px rgba(0, 0, 0, .48) !important;
 }
 
 #auth-card h1 {
@@ -120,9 +129,15 @@ footer {
 
 #auth-card input,
 #auth-card textarea {
-    border-color: var(--line-strong) !important;
-    background: #0b1424 !important;
+    border-color: rgba(198, 179, 154, .30) !important;
+    background: #280b0f !important;
     color: var(--text) !important;
+}
+
+#auth-card button.primary {
+    border-color: rgba(198, 179, 154, .18) !important;
+    background: linear-gradient(135deg, var(--rubine), #6f292d) !important;
+    color: #fff8ef !important;
 }
 
 .auth-copy {
@@ -133,7 +148,7 @@ footer {
 
 .auth-error {
     min-height: 24px !important;
-    color: #fda4af !important;
+    color: #f0aaa6 !important;
     font-size: .92rem !important;
 }
 
@@ -148,24 +163,29 @@ footer {
 }
 
 #sidebar {
-    width: 304px !important;
-    min-width: 304px !important;
-    max-width: 304px !important;
+    width: 320px !important;
+    min-width: 320px !important;
+    max-width: 320px !important;
     height: 100vh !important;
     padding: 18px 16px !important;
     overflow-x: hidden !important;
     overflow-y: auto !important;
-    background: linear-gradient(180deg, #070d18 0%, #0a1322 100%) !important;
-    border-right: 1px solid rgba(148, 163, 184, .16) !important;
+    background:
+        linear-gradient(180deg, #21080c 0%, #280b0f 55%, #1d070a 100%) !important;
+    border-right: 1px solid rgba(198, 179, 154, .16) !important;
 }
 
-#sidebar::-webkit-scrollbar {
+#sidebar::-webkit-scrollbar,
+#document-cards::-webkit-scrollbar,
+#conversation-list::-webkit-scrollbar {
     width: 6px;
 }
 
-#sidebar::-webkit-scrollbar-thumb {
+#sidebar::-webkit-scrollbar-thumb,
+#document-cards::-webkit-scrollbar-thumb,
+#conversation-list::-webkit-scrollbar-thumb {
     border-radius: 999px;
-    background: rgba(255, 255, 255, .16);
+    background: rgba(198, 179, 154, .24);
 }
 
 .brand {
@@ -174,23 +194,23 @@ footer {
 
 .brand h2 {
     margin: 0 !important;
-    color: #ffffff !important;
-    font-size: 1.12rem !important;
+    color: #fff8ef !important;
+    font-size: 1.16rem !important;
     letter-spacing: -.025em !important;
 }
 
 .brand p {
     margin: 5px 0 0 !important;
-    color: var(--muted) !important;
+    color: var(--camel) !important;
     font-size: .82rem !important;
 }
 
 .sidebar-heading {
-    margin: 16px 4px 8px !important;
-    color: #aebdd2 !important;
-    font-size: .72rem !important;
-    font-weight: 750 !important;
-    letter-spacing: .095em !important;
+    margin: 17px 4px 8px !important;
+    color: var(--camel) !important;
+    font-size: .71rem !important;
+    font-weight: 760 !important;
+    letter-spacing: .105em !important;
     text-transform: uppercase !important;
 }
 
@@ -203,18 +223,18 @@ footer {
 
 #new-chat button,
 #upload-button button {
-    border: 1px solid rgba(255, 255, 255, .12) !important;
-    background: linear-gradient(135deg, #6d5dfc, #5144e5) !important;
-    color: #ffffff !important;
+    border: 1px solid rgba(198, 179, 154, .18) !important;
+    background: linear-gradient(135deg, var(--rubine), #6f292d) !important;
+    color: #fff8ef !important;
 }
 
 #new-chat button:hover,
 #upload-button button:hover {
-    background: linear-gradient(135deg, #7c6cff, #5d50ee) !important;
+    background: linear-gradient(135deg, #a1494b, var(--rubine)) !important;
 }
 
 #conversation-list {
-    max-height: 134px !important;
+    max-height: 176px !important;
     overflow-y: auto !important;
     padding: 2px !important;
 }
@@ -225,31 +245,136 @@ footer {
     border: 1px solid transparent !important;
     border-radius: 10px !important;
     background: transparent !important;
-    color: #dbe4f0 !important;
+    color: var(--text-soft) !important;
+    font-size: .84rem !important;
 }
 
 #conversation-list label:hover {
-    background: rgba(255, 255, 255, .07) !important;
+    background: rgba(198, 179, 154, .08) !important;
 }
 
 #conversation-list label:has(input:checked) {
-    border-color: rgba(129, 140, 248, .34) !important;
-    background: rgba(109, 93, 252, .24) !important;
-    color: #ffffff !important;
+    border-color: rgba(198, 179, 154, .28) !important;
+    background: rgba(141, 58, 60, .34) !important;
+    color: #fff8ef !important;
 }
 
 #document-upload {
-    height: 108px !important;
-    min-height: 108px !important;
-    max-height: 108px !important;
+    height: 106px !important;
+    min-height: 106px !important;
+    max-height: 106px !important;
     overflow: hidden !important;
-    border: 1px dashed rgba(148, 163, 184, .35) !important;
-    border-radius: 12px !important;
-    background: rgba(255, 255, 255, .045) !important;
+    border: 1px dashed rgba(198, 179, 154, .38) !important;
+    border-radius: 13px !important;
+    background: rgba(198, 179, 154, .055) !important;
 }
 
 #document-upload * {
-    color: #d6e0ed !important;
+    color: var(--text-soft) !important;
+}
+
+#document-cards {
+    max-height: 222px !important;
+    margin-top: 10px !important;
+    overflow-y: auto !important;
+}
+
+.document-card {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 8px;
+    padding: 10px;
+    border: 1px solid rgba(198, 179, 154, .16);
+    border-radius: 12px;
+    background: rgba(198, 179, 154, .055);
+}
+
+.document-icon {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(198, 179, 154, .20);
+    border-radius: 10px;
+    background: rgba(141, 58, 60, .22);
+    color: #f7ecdf;
+    font-size: .69rem;
+    font-weight: 800;
+    letter-spacing: .04em;
+}
+
+.document-info {
+    min-width: 0;
+}
+
+.document-name {
+    overflow: hidden;
+    color: #fff8ef;
+    font-size: .82rem;
+    font-weight: 680;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.document-meta {
+    margin-top: 3px;
+    overflow: hidden;
+    color: var(--camel);
+    font-size: .71rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.status-badge {
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+    padding: 4px 7px;
+    border-radius: 999px;
+    font-size: .66rem;
+    font-weight: 760;
+    white-space: nowrap;
+}
+
+.status-ready {
+    background: rgba(184, 197, 154, .14);
+    color: #d9e3bc;
+}
+
+.status-processing,
+.status-pending {
+    background: rgba(216, 181, 121, .15);
+    color: #f0ce93;
+}
+
+.status-failed,
+.status-error {
+    background: rgba(228, 135, 132, .16);
+    color: #f4aaa7;
+}
+
+.status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.status-processing .status-dot,
+.status-pending .status-dot {
+    animation: statusPulse 1.15s ease-in-out infinite;
+}
+
+.document-empty {
+    padding: 15px 12px;
+    border: 1px dashed rgba(198, 179, 154, .20);
+    border-radius: 12px;
+    color: var(--camel);
+    font-size: .78rem;
+    line-height: 1.45;
+    text-align: center;
 }
 
 #selected-documents,
@@ -260,22 +385,22 @@ footer {
 #sidebar .form,
 #sidebar .block,
 #sidebar .wrap {
-    border-color: rgba(148, 163, 184, .20) !important;
-    background: rgba(255, 255, 255, .055) !important;
-    color: #e5edf7 !important;
+    border-color: rgba(198, 179, 154, .18) !important;
+    background: rgba(198, 179, 154, .055) !important;
+    color: var(--text-soft) !important;
 }
 
 #sidebar input,
 #sidebar textarea,
 #sidebar select {
-    color: #ffffff !important;
-    background: #101a2b !important;
+    color: #fff8ef !important;
+    background: var(--tamarind) !important;
 }
 
 #sidebar label,
 #sidebar span,
 #sidebar p {
-    color: #dbe4f0 !important;
+    color: var(--text-soft) !important;
 }
 
 .sidebar-actions {
@@ -283,49 +408,60 @@ footer {
     margin-top: 8px !important;
 }
 
-.sidebar-actions button {
-    border: 1px solid rgba(255, 255, 255, .14) !important;
-    background: rgba(255, 255, 255, .07) !important;
-    color: #e5edf7 !important;
+.sidebar-actions button,
+#refresh-documents button,
+#delete-conversation button {
+    border: 1px solid rgba(198, 179, 154, .18) !important;
+    background: rgba(198, 179, 154, .075) !important;
+    color: var(--text-soft) !important;
+}
+
+.sidebar-actions button:hover,
+#refresh-documents button:hover,
+#delete-conversation button:hover {
+    background: rgba(198, 179, 154, .13) !important;
 }
 
 .danger-action button {
-    color: #fecdd3 !important;
+    color: #f1b0ad !important;
 }
 
 #account-card {
     margin-top: 16px !important;
     padding: 12px 13px !important;
-    border: 1px solid rgba(255, 255, 255, .10) !important;
+    border: 1px solid rgba(198, 179, 154, .15) !important;
     border-radius: 12px !important;
-    background: rgba(255, 255, 255, .05) !important;
+    background: rgba(198, 179, 154, .055) !important;
 }
 
 #account-card h3 {
     margin: 0 !important;
-    color: #ffffff !important;
+    color: #fff8ef !important;
     font-size: .92rem !important;
 }
 
 #account-card p {
     margin: 3px 0 0 !important;
-    color: var(--muted) !important;
+    color: var(--camel) !important;
     font-size: .78rem !important;
 }
 
 #logout button {
     margin-top: 8px !important;
-    border: 1px solid rgba(255, 255, 255, .14) !important;
+    border: 1px solid rgba(198, 179, 154, .18) !important;
     background: transparent !important;
-    color: #dbe4f0 !important;
+    color: var(--text-soft) !important;
 }
 
 #main-panel {
+    position: relative !important;
     min-width: 0 !important;
     height: 100vh !important;
     padding: 0 !important;
     overflow-y: auto !important;
-    background: linear-gradient(180deg, #0d1728 0%, #0b1424 100%) !important;
+    background:
+        radial-gradient(circle at 50% 25%, rgba(141, 58, 60, .11), transparent 34%),
+        linear-gradient(180deg, #2b0d12 0%, #280b0f 54%, #23090d 100%) !important;
 }
 
 #main-panel > .gap,
@@ -337,23 +473,87 @@ footer {
 
 #chat-header {
     min-height: 76px !important;
-    padding: 0 28px !important;
+    padding: 0 30px !important;
     align-items: center !important;
-    border-bottom: 1px solid var(--line) !important;
-    background: rgba(19, 32, 54, .97) !important;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, .16) !important;
+    border-bottom: 1px solid rgba(198, 179, 154, .16) !important;
+    background: rgba(53, 17, 23, .97) !important;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, .22) !important;
 }
 
 #chat-header h3 {
     margin: 0 !important;
-    color: var(--text) !important;
-    font-size: 1.05rem !important;
+    color: #fff8ef !important;
+    font-size: 1.06rem !important;
 }
 
 #chat-header p {
     margin: 3px 0 0 !important;
-    color: var(--muted) !important;
+    color: var(--camel) !important;
     font-size: .82rem !important;
+}
+
+#empty-state-panel {
+    position: absolute !important;
+    top: 76px !important;
+    right: 0 !important;
+    bottom: 140px !important;
+    left: 0 !important;
+    z-index: 4 !important;
+    display: grid !important;
+    place-items: center !important;
+    padding: 28px !important;
+    pointer-events: none !important;
+    background: transparent !important;
+}
+
+.empty-state-card {
+    width: min(720px, 92%);
+    padding: 30px;
+    border: 1px solid rgba(198, 179, 154, .18);
+    border-radius: 22px;
+    background: rgba(59, 19, 25, .78);
+    box-shadow: 0 22px 65px rgba(0, 0, 0, .24);
+    text-align: center;
+    backdrop-filter: blur(10px);
+}
+
+.empty-eyebrow {
+    color: var(--camel);
+    font-size: .72rem;
+    font-weight: 800;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+}
+
+.empty-state-card h2 {
+    margin: 9px 0 8px;
+    color: #fff8ef;
+    font-size: clamp(1.6rem, 2.3vw, 2.2rem);
+    letter-spacing: -.035em;
+}
+
+.empty-state-card p {
+    max-width: 560px;
+    margin: 0 auto;
+    color: var(--text-soft);
+    line-height: 1.6;
+}
+
+.prompt-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 9px;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+.prompt-pill {
+    padding: 8px 12px;
+    border: 1px solid rgba(198, 179, 154, .20);
+    border-radius: 999px;
+    background: rgba(198, 179, 154, .075);
+    color: #ead9c7;
+    font-size: .79rem;
 }
 
 #chatbot,
@@ -379,23 +579,23 @@ footer {
 
 #chatbot .message {
     max-width: 860px !important;
-    border-radius: 16px !important;
-    line-height: 1.62 !important;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, .13) !important;
+    border-radius: 17px !important;
+    line-height: 1.64 !important;
+    box-shadow: 0 11px 30px rgba(0, 0, 0, .18) !important;
 }
 
 #chatbot .message.user,
 #chatbot [data-testid="user"] .message,
 #chatbot .user .message {
-    border: 1px solid rgba(255, 255, 255, .12) !important;
-    background: linear-gradient(135deg, #6d5dfc, #5144e5) !important;
-    color: #ffffff !important;
+    border: 1px solid rgba(255, 248, 239, .10) !important;
+    background: linear-gradient(135deg, var(--rubine), #6f292d) !important;
+    color: #fff8ef !important;
 }
 
 #chatbot .message.user *,
 #chatbot [data-testid="user"] .message *,
 #chatbot .user .message * {
-    color: #ffffff !important;
+    color: #fff8ef !important;
 }
 
 #chatbot .message.bot,
@@ -404,9 +604,9 @@ footer {
 #chatbot [data-testid="assistant"] .message,
 #chatbot .bot .message,
 #chatbot .assistant .message {
-    border: 1px solid var(--line) !important;
-    background: #1a2940 !important;
-    color: #f8fafc !important;
+    border: 1px solid rgba(198, 179, 154, .18) !important;
+    background: rgba(59, 19, 25, .96) !important;
+    color: #f7ecdf !important;
 }
 
 #chatbot .message.bot *,
@@ -415,32 +615,30 @@ footer {
 #chatbot [data-testid="assistant"] .message *,
 #chatbot .bot .message *,
 #chatbot .assistant .message * {
-    color: #f8fafc !important;
+    color: #f7ecdf !important;
+}
+
+#chatbot a {
+    color: #e7c7a3 !important;
 }
 
 #chatbot code {
-    border: 1px solid #3a4d6c !important;
-    background: #0b1424 !important;
-    color: #e2e8f0 !important;
+    border: 1px solid rgba(198, 179, 154, .20) !important;
+    background: #23090d !important;
+    color: #f1dfca !important;
 }
 
 #chatbot pre {
-    border: 1px solid #3a4d6c !important;
-    background: #08111f !important;
-    color: #e2e8f0 !important;
-}
-
-#chatbot .placeholder,
-#chatbot .empty,
-#chatbot [class*="placeholder"] {
-    color: #c5d1df !important;
+    border: 1px solid rgba(198, 179, 154, .20) !important;
+    background: #1d070a !important;
+    color: #f1dfca !important;
 }
 
 #sources-panel {
-    margin: 0 7vw !important;
-    border: 1px solid var(--line) !important;
+    margin: 0 7vw 12px !important;
+    border: 1px solid rgba(198, 179, 154, .18) !important;
     border-radius: 14px !important;
-    background: #132036 !important;
+    background: rgba(59, 19, 25, .96) !important;
     color: var(--text) !important;
 }
 
@@ -451,14 +649,92 @@ footer {
     color: var(--text) !important;
 }
 
+.source-card {
+    margin-bottom: 10px;
+    padding: 13px;
+    border: 1px solid rgba(198, 179, 154, .17);
+    border-radius: 12px;
+    background: rgba(40, 11, 15, .72);
+}
+
+.source-head {
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+}
+
+.source-name {
+    color: #fff8ef;
+    font-weight: 700;
+}
+
+.source-score,
+.source-location {
+    color: var(--camel);
+    font-size: .81rem;
+}
+
+.source-excerpt {
+    margin: 8px 0 0;
+    color: var(--text-soft);
+    line-height: 1.52;
+}
+
+#selection-chips {
+    position: sticky !important;
+    bottom: 88px !important;
+    z-index: 8 !important;
+    min-height: 42px !important;
+    padding: 8px 7vw 4px !important;
+    border-top: 1px solid rgba(198, 179, 154, .12) !important;
+    background: rgba(40, 11, 15, .97) !important;
+}
+
+.selection-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    align-items: center;
+}
+
+.selection-label {
+    margin-right: 2px;
+    color: var(--camel);
+    font-size: .72rem;
+    font-weight: 760;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.document-chip {
+    max-width: 220px;
+    overflow: hidden;
+    padding: 6px 9px;
+    border: 1px solid rgba(198, 179, 154, .17);
+    border-radius: 999px;
+    background: rgba(123, 105, 78, .22);
+    color: #ead9c7;
+    font-size: .76rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.selection-empty {
+    color: var(--camel);
+    font-size: .77rem;
+}
+
 #composer {
-    min-height: 92px !important;
-    padding: 14px 7vw 20px !important;
+    position: sticky !important;
+    bottom: 0 !important;
+    z-index: 9 !important;
+    min-height: 88px !important;
+    padding: 12px 7vw 18px !important;
     align-items: end !important;
     gap: 10px !important;
-    border-top: 1px solid var(--line) !important;
-    background: rgba(12, 23, 40, .98) !important;
-    box-shadow: 0 -10px 28px rgba(0, 0, 0, .18) !important;
+    border-top: 1px solid rgba(198, 179, 154, .14) !important;
+    background: rgba(40, 11, 15, .98) !important;
+    box-shadow: 0 -12px 32px rgba(0, 0, 0, .25) !important;
 }
 
 #question-input,
@@ -472,21 +748,21 @@ footer {
     min-height: 56px !important;
     max-height: 120px !important;
     padding: 15px 17px !important;
-    border: 1px solid var(--line-strong) !important;
+    border: 1px solid rgba(198, 179, 154, .30) !important;
     border-radius: 16px !important;
-    background: #16243a !important;
-    color: #f8fafc !important;
-    caret-color: #ffffff !important;
-    box-shadow: 0 9px 24px rgba(0, 0, 0, .20) !important;
+    background: var(--tamarind) !important;
+    color: #fff8ef !important;
+    caret-color: #fff8ef !important;
+    box-shadow: 0 9px 25px rgba(0, 0, 0, .22) !important;
 }
 
 #question-input textarea::placeholder {
-    color: #94a3b8 !important;
+    color: #bba991 !important;
 }
 
 #question-input textarea:focus {
-    border-color: #7c6cff !important;
-    box-shadow: 0 0 0 3px rgba(109, 93, 252, .20) !important;
+    border-color: var(--rubine-light) !important;
+    box-shadow: 0 0 0 3px rgba(141, 58, 60, .24) !important;
 }
 
 #send-button button {
@@ -494,12 +770,12 @@ footer {
     min-width: 56px !important;
     height: 56px !important;
     min-height: 56px !important;
-    border: 1px solid rgba(255, 255, 255, .12) !important;
+    border: 1px solid rgba(255, 248, 239, .12) !important;
     border-radius: 16px !important;
-    background: linear-gradient(135deg, #6d5dfc, #5144e5) !important;
-    color: #ffffff !important;
+    background: linear-gradient(135deg, var(--rubine), #6f292d) !important;
+    color: #fff8ef !important;
     font-size: 1.12rem !important;
-    box-shadow: 0 9px 24px rgba(0, 0, 0, .18) !important;
+    box-shadow: 0 9px 24px rgba(0, 0, 0, .22) !important;
 }
 
 .toast-anchor {
@@ -516,38 +792,38 @@ footer {
     gap: 12px;
     align-items: flex-start;
     padding: 15px 17px;
-    border: 1px solid var(--line-strong);
+    border: 1px solid rgba(198, 179, 154, .25);
     border-radius: 15px;
-    background: #17253a;
+    background: #3b1319;
     color: var(--text);
-    box-shadow: 0 22px 55px rgba(0, 0, 0, .38);
+    box-shadow: 0 22px 55px rgba(0, 0, 0, .45);
     pointer-events: auto;
 }
 
 .toast.error {
-    border-left: 4px solid #fb7185;
+    border-left: 4px solid var(--danger);
 }
 
 .toast.success {
-    border-left: 4px solid #34d399;
+    border-left: 4px solid var(--success);
 }
 
 .toast.info {
-    border-left: 4px solid #60a5fa;
+    border-left: 4px solid var(--rubine-light);
 }
 
 .toast.working {
-    border-left: 4px solid #fbbf24;
+    border-left: 4px solid var(--warning);
 }
 
 .toast strong {
     display: block;
     margin-bottom: 3px;
-    color: #ffffff;
+    color: #fff8ef;
 }
 
 .toast span {
-    color: #cbd5e1;
+    color: var(--text-soft);
     font-size: .9rem;
     line-height: 1.45;
 }
@@ -558,15 +834,15 @@ footer {
     height: 24px;
     display: grid;
     place-items: center;
-    color: #ffffff;
+    color: #fff8ef;
     font-weight: 800;
 }
 
 .spinner {
     width: 18px;
     height: 18px;
-    border: 2px solid rgba(255, 255, 255, .28);
-    border-top-color: #fbbf24;
+    border: 2px solid rgba(255, 248, 239, .24);
+    border-top-color: var(--warning);
     border-radius: 50%;
     animation: spin .8s linear infinite;
 }
@@ -574,6 +850,17 @@ footer {
 @keyframes spin {
     to {
         transform: rotate(360deg);
+    }
+}
+
+@keyframes statusPulse {
+    0%, 100% {
+        opacity: .4;
+        transform: scale(.85);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.15);
     }
 }
 
@@ -585,22 +872,26 @@ select,
     transition: none !important;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1050px) {
     #sidebar {
-        width: 270px !important;
-        min-width: 270px !important;
-        max-width: 270px !important;
+        width: 286px !important;
+        min-width: 286px !important;
+        max-width: 286px !important;
     }
 
-    #sources-panel,
+    #sources-panel {
+        margin-left: 22px !important;
+        margin-right: 22px !important;
+    }
+
+    #selection-chips,
     #composer {
-        margin-left: 18px !important;
-        margin-right: 18px !important;
-        padding-left: 18px !important;
-        padding-right: 18px !important;
+        padding-left: 22px !important;
+        padding-right: 22px !important;
     }
 }
 """
+
 
 def empty_state() -> dict[str, Any]:
     return EMPTY_STATE.copy()
@@ -625,8 +916,8 @@ def toast(kind: str, title: str, message: str) -> str:
     )
     return (
         f'<div class="toast {safe_kind}">'
-        f'{icon_html}<div><strong>{html.escape(title)}</strong>'
-        f'<span>{html.escape(message)}</span></div></div>'
+        f"{icon_html}<div><strong>{html.escape(title)}</strong>"
+        f"<span>{html.escape(message)}</span></div></div>"
     )
 
 
@@ -697,29 +988,217 @@ def auth_mode_changed(mode: str | None):
     )
 
 
-def document_updates(documents: list[dict[str, Any]]):
-    choices: list[tuple[str, str]] = []
+def parse_api_datetime(value: Any) -> datetime | None:
+    text = safe_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def format_file_size(value: Any) -> str:
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        return ""
+    units = ["B", "KB", "MB", "GB"]
+    amount = float(max(size, 0))
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if amount < 1024 or candidate == units[-1]:
+            break
+        amount /= 1024
+    precision = 0 if unit == "B" else 1
+    return f"{amount:.{precision}f} {unit}"
+
+
+def document_status(document: dict[str, Any]) -> str:
+    return safe_text(document.get("status") or "unknown").lower().replace(" ", "_")
+
+
+def is_ready(document: dict[str, Any]) -> bool:
+    return document_status(document) in READY_STATUSES
+
+
+def document_icon(filename: str) -> str:
+    suffix = Path(filename).suffix.lower().lstrip(".")
+    return (suffix or "FILE")[:4].upper()
+
+
+def render_document_cards(documents: list[dict[str, Any]]) -> str:
+    if not documents:
+        return (
+            '<div class="document-empty">No documents yet.<br>'
+            "Upload a PDF, DOCX, TXT, MD, or JSON file.</div>"
+        )
+
+    cards: list[str] = []
+    for document in documents:
+        filename = safe_text(document.get("filename")) or "Untitled document"
+        status_key = document_status(document)
+        status_label = status_key.replace("_", " ").title()
+        status_class = (
+            "ready"
+            if status_key in READY_STATUSES
+            else "processing"
+            if status_key in PROCESSING_STATUSES
+            else "failed"
+            if status_key in {"failed", "error"}
+            else "pending"
+        )
+        size = format_file_size(
+            document.get("size_bytes")
+            or document.get("file_size")
+            or document.get("size")
+        )
+        updated = parse_api_datetime(document.get("updated_at") or document.get("created_at"))
+        date_label = updated.strftime("%d %b %Y") if updated else ""
+        meta = " · ".join(part for part in (size, date_label) if part) or "Stored in your workspace"
+        cards.append(
+            '<div class="document-card">'
+            f'<div class="document-icon">{html.escape(document_icon(filename))}</div>'
+            '<div class="document-info">'
+            f'<div class="document-name" title="{html.escape(filename)}">{html.escape(filename)}</div>'
+            f'<div class="document-meta">{html.escape(meta)}</div>'
+            "</div>"
+            f'<span class="status-badge status-{status_class}">'
+            '<span class="status-dot"></span>'
+            f"{html.escape(status_label)}</span>"
+            "</div>"
+        )
+    return "".join(cards)
+
+
+def render_selected_chips(selected_ids: list[str] | None, catalog: dict[str, str] | None) -> str:
+    selected = [safe_text(item) for item in (selected_ids or []) if safe_text(item)]
+    names = catalog or {}
+    if not selected:
+        return '<div class="selection-empty">No documents selected. The assistant will search all ready documents.</div>'
+
+    chips = []
+    for document_id in selected:
+        name = names.get(document_id, "Selected document")
+        chips.append(f'<span class="document-chip" title="{html.escape(name)}">{html.escape(name)}</span>')
+    return '<div class="selection-row"><span class="selection-label">Using</span>' + "".join(chips) + "</div>"
+
+
+def render_empty_state(documents: list[dict[str, Any]]) -> str:
+    ready_count = sum(1 for document in documents if is_ready(document))
+    processing_count = sum(1 for document in documents if document_status(document) in PROCESSING_STATUSES)
+
+    if ready_count:
+        description = (
+            f"{ready_count} document{'s are' if ready_count != 1 else ' is'} ready. "
+            "Choose the files you want to search, then ask a focused question."
+        )
+        eyebrow = "Your knowledge workspace"
+    elif processing_count:
+        description = (
+            f"{processing_count} document{'s are' if processing_count != 1 else ' is'} still processing. "
+            "Refresh the status in a moment, then start asking questions."
+        )
+        eyebrow = "Indexing in progress"
+    else:
+        description = "Upload a document from the sidebar to build your private searchable knowledge space."
+        eyebrow = "Start here"
+
+    return (
+        '<div class="empty-state-card">'
+        f'<div class="empty-eyebrow">{html.escape(eyebrow)}</div>'
+        "<h2>Ask better questions of your documents</h2>"
+        f"<p>{html.escape(description)}</p>"
+        '<div class="prompt-suggestions">'
+        '<span class="prompt-pill">Summarize the key findings</span>'
+        '<span class="prompt-pill">Compare the uploaded reports</span>'
+        '<span class="prompt-pill">List decisions and action items</span>'
+        '<span class="prompt-pill">Find evidence for a claim</span>'
+        "</div></div>"
+    )
+
+
+def document_updates(
+    documents: list[dict[str, Any]],
+    selected_ids: list[str] | None = None,
+):
+    catalog: dict[str, str] = {}
+    ready_choices: list[tuple[str, str]] = []
     manage_choices: list[tuple[str, str]] = []
 
     for document in documents:
         filename = safe_text(document.get("filename")) or "Untitled document"
         document_id = safe_text(document.get("id"))
-        status = safe_text(document.get("status") or "unknown").replace("_", " ").title()
-        label = f"{filename}  ·  {status}"
-        if document_id:
-            choices.append((label, document_id))
-            manage_choices.append((filename, document_id))
+        if not document_id:
+            continue
+        catalog[document_id] = filename
+        manage_choices.append((filename, document_id))
+        if is_ready(document):
+            ready_choices.append((filename, document_id))
+
+    ready_ids = [value for _, value in ready_choices]
+    if selected_ids is None:
+        selected = ready_ids
+    else:
+        selected = [value for value in selected_ids if value in ready_ids]
 
     return (
-        gr.update(choices=choices, value=[value for _, value in choices]),
+        gr.update(choices=ready_choices, value=selected),
         gr.update(choices=manage_choices, value=None),
+        render_document_cards(documents),
+        catalog,
+        render_empty_state(documents),
+        render_selected_chips(selected, catalog),
     )
 
 
+def empty_document_outputs():
+    return document_updates([], [])
+
+
+def conversation_title(item: dict[str, Any]) -> str:
+    title = safe_text(item.get("title"))
+    if not title:
+        title = safe_text(item.get("last_message") or item.get("first_message"))
+    if not title:
+        title = "New conversation"
+    return title if len(title) <= 34 else title[:31].rstrip() + "…"
+
+
+def conversation_group(item: dict[str, Any]) -> str:
+    timestamp = parse_api_datetime(item.get("updated_at") or item.get("created_at"))
+    if not timestamp:
+        return "Older"
+    today = datetime.now(timezone.utc).date()
+    delta = (today - timestamp.astimezone(timezone.utc).date()).days
+    if delta <= 0:
+        return "Today"
+    if delta == 1:
+        return "Yesterday"
+    if delta <= 7:
+        return "This week"
+    return "Older"
+
+
 def conversation_updates(conversations: list[dict[str, Any]], selected: str | None = None):
+    order = {"Today": 0, "Yesterday": 1, "This week": 2, "Older": 3}
+    sorted_items = sorted(
+        conversations,
+        key=lambda item: (
+            order.get(conversation_group(item), 4),
+            -(parse_api_datetime(item.get("updated_at") or item.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)).timestamp(),
+        ),
+    )
     choices = [
-        (safe_text(item.get("title")) or "Untitled chat", safe_text(item.get("id")))
-        for item in conversations
+        (
+            f"{conversation_group(item)}  ·  {conversation_title(item)}",
+            safe_text(item.get("id")),
+        )
+        for item in sorted_items
         if item.get("id")
     ]
     valid_values = {value for _, value in choices}
@@ -727,10 +1206,13 @@ def conversation_updates(conversations: list[dict[str, Any]], selected: str | No
     return gr.update(choices=choices, value=value)
 
 
-def load_documents(state: dict[str, Any] | None):
+def load_documents(
+    state: dict[str, Any] | None,
+    selected_ids: list[str] | None = None,
+):
     current = state or empty_state()
     if not current.get("access_token"):
-        return gr.update(choices=[], value=[]), gr.update(choices=[], value=None)
+        return empty_document_outputs()
 
     try:
         response = httpx.get(
@@ -739,14 +1221,14 @@ def load_documents(state: dict[str, Any] | None):
             timeout=REQUEST_TIMEOUT,
         )
     except httpx.HTTPError:
-        return gr.update(choices=[], value=[]), gr.update(choices=[], value=None)
+        return empty_document_outputs()
 
     if response.status_code != 200:
-        return gr.update(choices=[], value=[]), gr.update(choices=[], value=None)
+        return empty_document_outputs()
 
     data = response.json()
     documents = data if isinstance(data, list) else []
-    return document_updates(documents)
+    return document_updates(documents, selected_ids)
 
 
 def load_conversations(state: dict[str, Any] | None):
@@ -785,6 +1267,7 @@ def authenticate(
     clean_confirmation = safe_text(confirmation)
 
     def failure(message: str):
+        selected, manage, cards, catalog, empty_html, chips = empty_document_outputs()
         return (
             empty_state(),
             gr.update(visible=True),
@@ -793,8 +1276,12 @@ def authenticate(
             "",
             "",
             gr.update(choices=[], value=None),
-            gr.update(choices=[], value=[]),
-            gr.update(choices=[], value=None),
+            selected,
+            manage,
+            cards,
+            catalog,
+            gr.update(value=empty_html, visible=True),
+            chips,
         )
 
     if not clean_email:
@@ -836,7 +1323,7 @@ def authenticate(
     }
 
     conversations = load_conversations(state)
-    documents, manage_documents = load_documents(state)
+    selected, manage, cards, catalog, empty_html, chips = load_documents(state)
     display_name = html.escape(safe_text(user.get("name") or user.get("email") or "User"))
     user_email = html.escape(safe_text(user.get("email")))
 
@@ -848,12 +1335,17 @@ def authenticate(
         f"### {display_name}\n{user_email}",
         toast("success", "Welcome", "You are signed in."),
         conversations,
-        documents,
-        manage_documents,
+        selected,
+        manage,
+        cards,
+        catalog,
+        gr.update(value=empty_html, visible=True),
+        chips,
     )
 
 
 def logout():
+    selected, manage, cards, catalog, empty_html, chips = empty_document_outputs()
     return (
         empty_state(),
         gr.update(visible=True),
@@ -862,9 +1354,14 @@ def logout():
         "",
         [],
         "",
+        gr.update(visible=False),
         gr.update(choices=[], value=None),
-        gr.update(choices=[], value=[]),
-        gr.update(choices=[], value=None),
+        selected,
+        manage,
+        cards,
+        catalog,
+        gr.update(value=empty_html, visible=True),
+        chips,
     )
 
 
@@ -883,12 +1380,21 @@ def normalize_files(files: list[Any] | Any | None) -> list[Path]:
     return paths
 
 
-def upload_documents(state: dict[str, Any] | None, files: list[Any] | Any | None):
+def upload_documents(
+    state: dict[str, Any] | None,
+    files: list[Any] | Any | None,
+    selected_ids: list[str] | None,
+):
     current = state or empty_state()
     if not current.get("access_token"):
+        selected, manage, cards, catalog, empty_html, chips = empty_document_outputs()
         yield (
-            gr.update(choices=[], value=[]),
-            gr.update(choices=[], value=None),
+            selected,
+            manage,
+            cards,
+            catalog,
+            empty_html,
+            chips,
             None,
             toast("error", "Session expired", "Please log in again."),
         )
@@ -896,20 +1402,28 @@ def upload_documents(state: dict[str, Any] | None, files: list[Any] | Any | None
 
     paths = normalize_files(files)
     if not paths:
-        documents, manage_documents = load_documents(current)
+        selected, manage, cards, catalog, empty_html, chips = load_documents(current, selected_ids)
         yield (
-            documents,
-            manage_documents,
+            selected,
+            manage,
+            cards,
+            catalog,
+            empty_html,
+            chips,
             None,
             toast("info", "No file selected", "Choose at least one document."),
         )
         return
 
-    documents, manage_documents = load_documents(current)
+    selected, manage, cards, catalog, empty_html, chips = load_documents(current, selected_ids)
     file_count = len(paths)
     yield (
-        documents,
-        manage_documents,
+        selected,
+        manage,
+        cards,
+        catalog,
+        empty_html,
+        chips,
         gr.update(),
         toast(
             "working",
@@ -945,25 +1459,45 @@ def upload_documents(state: dict[str, Any] | None, files: list[Any] | Any | None
         else:
             failures.append(f"{path.name}: {friendly_api_error(response)}")
 
-    documents, manage_documents = load_documents(current)
+    selected, manage, cards, catalog, empty_html, chips = load_documents(current, None)
     if failures:
         message = "; ".join(failures[:3])
         title = "Upload completed with issues" if success else "Upload failed"
         kind = "info" if success else "error"
     else:
         title = "Upload complete"
-        message = f"{success} document(s) are ready to use."
+        message = f"{success} document(s) were added to your workspace."
         kind = "success"
 
-    yield documents, manage_documents, None, toast(kind, title, message)
+    yield selected, manage, cards, catalog, empty_html, chips, None, toast(kind, title, message)
 
 
-def delete_document(state: dict[str, Any] | None, document_id: str | None):
+def refresh_documents(
+    state: dict[str, Any] | None,
+    selected_ids: list[str] | None,
+):
+    selected, manage, cards, catalog, empty_html, chips = load_documents(state, selected_ids)
+    return (
+        selected,
+        manage,
+        cards,
+        catalog,
+        empty_html,
+        chips,
+        toast("success", "Status refreshed", "Document processing states are up to date."),
+    )
+
+
+def delete_document(
+    state: dict[str, Any] | None,
+    document_id: str | None,
+    selected_ids: list[str] | None,
+):
     current = state or empty_state()
     clean_id = safe_text(document_id)
     if not clean_id:
-        documents, manage_documents = load_documents(current)
-        return documents, manage_documents, toast("info", "Choose a document", "Select a file before deleting it.")
+        outputs = load_documents(current, selected_ids)
+        return (*outputs, toast("info", "Choose a document", "Select a file before deleting it."))
 
     try:
         response = httpx.delete(
@@ -980,26 +1514,26 @@ def delete_document(state: dict[str, Any] | None, document_id: str | None):
             else toast("error", "Delete failed", friendly_api_error(response))
         )
 
-    documents, manage_documents = load_documents(current)
-    return documents, manage_documents, message
+    remaining = [item for item in (selected_ids or []) if item != clean_id]
+    outputs = load_documents(current, remaining)
+    return (*outputs, message)
 
 
-def reprocess_document(state: dict[str, Any] | None, document_id: str | None):
+def reprocess_document(
+    state: dict[str, Any] | None,
+    document_id: str | None,
+    selected_ids: list[str] | None,
+):
     current = state or empty_state()
     clean_id = safe_text(document_id)
     if not clean_id:
-        documents, manage_documents = load_documents(current)
-        yield (
-            documents,
-            manage_documents,
-            toast("info", "Choose a document", "Select a file before reprocessing it."),
-        )
+        outputs = load_documents(current, selected_ids)
+        yield (*outputs, toast("info", "Choose a document", "Select a file before reprocessing it."))
         return
 
-    documents, manage_documents = load_documents(current)
+    outputs = load_documents(current, selected_ids)
     yield (
-        documents,
-        manage_documents,
+        *outputs,
         toast(
             "working",
             "Reprocessing document",
@@ -1022,8 +1556,15 @@ def reprocess_document(state: dict[str, Any] | None, document_id: str | None):
             else toast("error", "Reprocessing failed", friendly_api_error(response))
         )
 
-    documents, manage_documents = load_documents(current)
-    yield documents, manage_documents, message
+    outputs = load_documents(current, selected_ids)
+    yield (*outputs, message)
+
+
+def update_selected_chips(
+    selected_ids: list[str] | None,
+    catalog: dict[str, str] | None,
+):
+    return render_selected_chips(selected_ids, catalog)
 
 
 def new_chat(state: dict[str, Any] | None):
@@ -1035,6 +1576,7 @@ def new_chat(state: dict[str, Any] | None):
         [],
         gr.update(visible=False),
         "",
+        gr.update(visible=True),
         toast("info", "New chat", "Start with a question about your documents."),
     )
 
@@ -1043,7 +1585,7 @@ def load_conversation(state: dict[str, Any] | None, conversation_id: str | None)
     current = state or empty_state()
     clean_id = safe_text(conversation_id)
     if not clean_id:
-        return current, [], gr.update(visible=False), ""
+        return current, [], gr.update(visible=False), gr.update(visible=True), ""
 
     try:
         response = httpx.get(
@@ -1052,12 +1594,12 @@ def load_conversation(state: dict[str, Any] | None, conversation_id: str | None)
             timeout=REQUEST_TIMEOUT,
         )
     except httpx.HTTPError:
-        return current, [], gr.update(visible=False), toast(
+        return current, [], gr.update(visible=False), gr.update(visible=True), toast(
             "error", "Could not load chat", backend_unavailable()
         )
 
     if response.status_code != 200:
-        return current, [], gr.update(visible=False), toast(
+        return current, [], gr.update(visible=False), gr.update(visible=True), toast(
             "error", "Could not load chat", friendly_api_error(response)
         )
 
@@ -1072,7 +1614,13 @@ def load_conversation(state: dict[str, Any] | None, conversation_id: str | None)
         if item.get("content")
     ]
     updated = {**current, "conversation_id": clean_id}
-    return updated, history, gr.update(visible=False), ""
+    return (
+        updated,
+        history,
+        gr.update(visible=False),
+        gr.update(visible=not bool(history)),
+        "",
+    )
 
 
 def delete_conversation(state: dict[str, Any] | None, conversation_id: str | None):
@@ -1084,6 +1632,7 @@ def delete_conversation(state: dict[str, Any] | None, conversation_id: str | Non
             load_conversations(current),
             [],
             gr.update(visible=False),
+            gr.update(visible=True),
             toast("info", "Choose a chat", "Select a conversation before deleting it."),
         )
 
@@ -1099,6 +1648,7 @@ def delete_conversation(state: dict[str, Any] | None, conversation_id: str | Non
             load_conversations(current),
             [],
             gr.update(visible=False),
+            gr.update(visible=True),
             toast("error", "Delete failed", backend_unavailable()),
         )
 
@@ -1108,6 +1658,7 @@ def delete_conversation(state: dict[str, Any] | None, conversation_id: str | Non
             load_conversations(current),
             [],
             gr.update(visible=False),
+            gr.update(visible=True),
             toast("error", "Delete failed", friendly_api_error(response)),
         )
 
@@ -1117,44 +1668,75 @@ def delete_conversation(state: dict[str, Any] | None, conversation_id: str | Non
         load_conversations(updated),
         [],
         gr.update(visible=False),
+        gr.update(visible=True),
         toast("success", "Chat deleted", "The conversation was removed."),
     )
 
 
+def escape_markdown(value: str) -> str:
+    escaped = value
+    for character in ("\\", "`", "*", "_", "{", "}", "[", "]", "<", ">", "#", "+", "-", ".", "!", "|"):
+        escaped = escaped.replace(character, f"\\{character}")
+    return escaped
+
+
+def source_location(source: dict[str, Any]) -> str:
+    page = source.get("page_number")
+    chunk = source.get("chunk_index")
+    if page is not None:
+        return f"Page {page}"
+    if chunk is not None:
+        return f"Chunk {chunk}"
+    return "Excerpt"
+
+
+def source_citations(raw_sources: list[dict[str, Any]]) -> str:
+    if not raw_sources:
+        return ""
+    rows: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for source in raw_sources[:5]:
+        filename = safe_text(source.get("filename")) or "Document"
+        location = source_location(source)
+        key = (filename, location)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(f"- {escape_markdown(filename)} — {escape_markdown(location)}")
+    if not rows:
+        return ""
+    return "\n\n---\n**Sources used**\n" + "\n".join(rows)
+
+
 def format_sources(raw_sources: list[dict[str, Any]]) -> str:
     if not raw_sources:
-        return '<p style="color:#9fb0c7;margin:0;">No sources were returned for this answer.</p>'
+        return '<p class="selection-empty">No sources were returned for this answer.</p>'
 
     cards: list[str] = []
     for source in raw_sources:
         filename = html.escape(safe_text(source.get("filename")) or "Document")
-        page = source.get("page_number")
-        chunk = source.get("chunk_index")
-        location = (
-            f"Page {page}"
-            if page is not None
-            else f"Chunk {chunk}"
-            if chunk is not None
-            else "Excerpt"
-        )
+        location = html.escape(source_location(source))
         excerpt = safe_text(
             source.get("text_content")
             or source.get("text")
             or source.get("content")
         )
-        if len(excerpt) > 360:
-            excerpt = excerpt[:360].rstrip() + "…"
+        if len(excerpt) > 420:
+            excerpt = excerpt[:420].rstrip() + "…"
         try:
             score = float(source.get("score") or 0)
         except (TypeError, ValueError):
             score = 0.0
         score_label = f"{max(0, min(100, round(score * 100)))}% match"
         cards.append(
-            '<div style="padding:13px;margin-bottom:10px;border:1px solid #2b3b55;border-radius:12px;background:#1a2940;color:#f8fafc;">'
-            f'<div style="display:flex;justify-content:space-between;gap:12px;"><strong style="color:#ffffff;">{filename}</strong><span style="color:#9fb0c7;font-size:.82rem;">{score_label}</span></div>'
-            f'<div style="color:#9fb0c7;font-size:.82rem;margin-top:3px;">{html.escape(location)}</div>'
+            '<div class="source-card">'
+            '<div class="source-head">'
+            f'<span class="source-name">{filename}</span>'
+            f'<span class="source-score">{html.escape(score_label)}</span>'
+            "</div>"
+            f'<div class="source-location">{location}</div>'
             + (
-                f'<p style="margin:8px 0 0;color:#d9e3f0;line-height:1.5;">{html.escape(excerpt)}</p>'
+                f'<p class="source-excerpt">{html.escape(excerpt)}</p>'
                 if excerpt
                 else ""
             )
@@ -1180,6 +1762,7 @@ def ask_question(
             current_history,
             "",
             gr.update(visible=False),
+            gr.update(visible=not bool(current_history)),
             toast("error", "Session expired", "Please log in again."),
             load_conversations(current),
         )
@@ -1192,6 +1775,7 @@ def ask_question(
             current_history,
             "",
             gr.update(visible=False),
+            gr.update(visible=not bool(current_history)),
             toast("info", "Write a question", "Ask something about your uploaded documents."),
             load_conversations(current),
         )
@@ -1200,13 +1784,14 @@ def ask_question(
     working_history = [
         *current_history,
         {"role": "user", "content": clean_question},
-        {"role": "assistant", "content": "Thinking… I am searching your selected documents."},
+        {"role": "assistant", "content": "Searching your documents and preparing a grounded answer…"},
     ]
     yield (
         current,
         "",
         working_history,
         "",
+        gr.update(visible=False),
         gr.update(visible=False),
         toast(
             "working",
@@ -1245,6 +1830,7 @@ def ask_question(
             error_history,
             "",
             gr.update(visible=False),
+            gr.update(visible=False),
             toast("error", "Could not generate an answer", error_message),
             load_conversations(current),
         )
@@ -1266,6 +1852,7 @@ def ask_question(
             error_history,
             "",
             gr.update(visible=False),
+            gr.update(visible=False),
             toast("error", "Could not generate an answer", error_message),
             load_conversations(current),
         )
@@ -1273,27 +1860,27 @@ def ask_question(
 
     data = response.json()
     answer = safe_text(data.get("answer")) or "No answer was generated."
+    raw_sources = data.get("retrieved_sources") or data.get("sources") or []
+    source_list = raw_sources if isinstance(raw_sources, list) else []
+    answer_with_sources = answer + source_citations(source_list)
     updated_history = [
         *current_history,
         {"role": "user", "content": clean_question},
-        {"role": "assistant", "content": answer},
+        {"role": "assistant", "content": answer_with_sources},
     ]
     updated = {
         **current,
         "conversation_id": safe_text(data.get("conversation_id"))
         or current.get("conversation_id"),
     }
-    raw_sources = data.get("retrieved_sources") or data.get("sources") or []
-    sources_html = format_sources(
-        raw_sources if isinstance(raw_sources, list) else []
-    )
 
     yield (
         updated,
         "",
         updated_history,
-        sources_html,
-        gr.update(visible=bool(raw_sources)),
+        format_sources(source_list),
+        gr.update(visible=bool(source_list)),
+        gr.update(visible=False),
         toast("success", "Answer ready", "The response is grounded in your selected documents."),
         load_conversations(updated),
     )
@@ -1305,6 +1892,7 @@ with gr.Blocks(
     fill_height=True,
 ) as demo:
     auth_state = gr.State(empty_state())
+    document_catalog = gr.State({})
     toast_box = gr.HTML("", elem_classes=["toast-anchor"])
 
     with gr.Row(
@@ -1365,7 +1953,7 @@ with gr.Blocks(
     ) as workspace:
         with gr.Column(
             scale=0,
-            min_width=304,
+            min_width=320,
             elem_id="sidebar",
         ):
             gr.Markdown(
@@ -1390,6 +1978,7 @@ with gr.Blocks(
             )
             delete_conversation_button = gr.Button(
                 "Delete selected chat",
+                elem_id="delete-conversation",
                 elem_classes=["danger-action"],
             )
 
@@ -1401,13 +1990,21 @@ with gr.Blocks(
                 file_count="multiple",
                 file_types=SUPPORTED_FILE_TYPES,
                 type="filepath",
-                height=108,
+                height=106,
                 elem_id="document-upload",
             )
             upload_button = gr.Button(
                 "Upload documents",
                 variant="primary",
                 elem_id="upload-button",
+            )
+            document_cards = gr.HTML(
+                render_document_cards([]),
+                elem_id="document-cards",
+            )
+            refresh_documents_button = gr.Button(
+                "Refresh document status",
+                elem_id="refresh-documents",
             )
 
             gr.Markdown("Use in answers", elem_classes=["sidebar-heading"])
@@ -1425,7 +2022,7 @@ with gr.Blocks(
             manage_document = gr.Dropdown(
                 choices=[],
                 value=None,
-                label="Manage a document",
+                label="Document actions",
                 elem_id="manage-document",
             )
             with gr.Row(elem_classes=["sidebar-actions"]):
@@ -1446,32 +2043,44 @@ with gr.Blocks(
             with gr.Row(elem_id="chat-header"):
                 gr.Markdown(
                     "### Chat with your documents\n"
-                    "Answers are grounded in your selected files"
+                    "Grounded answers with the sources shown beneath each response"
                 )
+
+            empty_panel = gr.HTML(
+                render_empty_state([]),
+                visible=True,
+                elem_id="empty-state-panel",
+            )
 
             chatbot = gr.Chatbot(
                 value=[],
                 label="",
                 show_label=False,
                 container=False,
-                height="calc(100vh - 240px)",
+                height="calc(100vh - 248px)",
                 min_height=420,
-                max_height="calc(100vh - 240px)",
-                placeholder=(
-                    "Ask questions about your documents\n\n"
-                    "Try: Summarize the key findings · Compare the reports · "
-                    "What are the project objectives?"
-                ),
+                max_height="calc(100vh - 248px)",
+                placeholder="",
+                buttons=["copy", "copy_all"],
+                autoscroll=True,
+                layout="bubble",
+                feedback_options=None,
+                group_consecutive_messages=False,
                 elem_id="chatbot",
             )
 
             with gr.Accordion(
-                "Sources",
+                "Source details",
                 open=False,
                 visible=False,
                 elem_id="sources-panel",
             ) as sources_panel:
                 sources_html = gr.HTML("")
+
+            selection_chips = gr.HTML(
+                render_selected_chips([], {}),
+                elem_id="selection-chips",
+            )
 
             with gr.Row(elem_id="composer"):
                 question_input = gr.Textbox(
@@ -1520,8 +2129,12 @@ with gr.Blocks(
             conversation_list,
             selected_documents,
             manage_document,
+            document_cards,
+            document_catalog,
+            empty_panel,
+            selection_chips,
         ],
-        show_progress="hidden",
+        show_progress="minimal",
     )
 
     logout_button.click(
@@ -1534,31 +2147,83 @@ with gr.Blocks(
             toast_box,
             chatbot,
             sources_html,
+            sources_panel,
             conversation_list,
             selected_documents,
             manage_document,
+            document_cards,
+            document_catalog,
+            empty_panel,
+            selection_chips,
         ],
         show_progress="hidden",
     )
 
     upload_button.click(
         upload_documents,
-        inputs=[auth_state, upload_files],
-        outputs=[selected_documents, manage_document, upload_files, toast_box],
+        inputs=[auth_state, upload_files, selected_documents],
+        outputs=[
+            selected_documents,
+            manage_document,
+            document_cards,
+            document_catalog,
+            empty_panel,
+            selection_chips,
+            upload_files,
+            toast_box,
+        ],
+        show_progress="hidden",
+    )
+
+    refresh_documents_button.click(
+        refresh_documents,
+        inputs=[auth_state, selected_documents],
+        outputs=[
+            selected_documents,
+            manage_document,
+            document_cards,
+            document_catalog,
+            empty_panel,
+            selection_chips,
+            toast_box,
+        ],
         show_progress="hidden",
     )
 
     delete_document_button.click(
         delete_document,
-        inputs=[auth_state, manage_document],
-        outputs=[selected_documents, manage_document, toast_box],
-        show_progress="hidden",
+        inputs=[auth_state, manage_document, selected_documents],
+        outputs=[
+            selected_documents,
+            manage_document,
+            document_cards,
+            document_catalog,
+            empty_panel,
+            selection_chips,
+            toast_box,
+        ],
+        show_progress="minimal",
     )
 
     reprocess_document_button.click(
         reprocess_document,
-        inputs=[auth_state, manage_document],
-        outputs=[selected_documents, manage_document, toast_box],
+        inputs=[auth_state, manage_document, selected_documents],
+        outputs=[
+            selected_documents,
+            manage_document,
+            document_cards,
+            document_catalog,
+            empty_panel,
+            selection_chips,
+            toast_box,
+        ],
+        show_progress="hidden",
+    )
+
+    selected_documents.change(
+        update_selected_chips,
+        inputs=[selected_documents, document_catalog],
+        outputs=[selection_chips],
         show_progress="hidden",
     )
 
@@ -1571,6 +2236,7 @@ with gr.Blocks(
             chatbot,
             sources_panel,
             sources_html,
+            empty_panel,
             toast_box,
         ],
         show_progress="hidden",
@@ -1579,8 +2245,8 @@ with gr.Blocks(
     conversation_list.change(
         load_conversation,
         inputs=[auth_state, conversation_list],
-        outputs=[auth_state, chatbot, sources_panel, toast_box],
-        show_progress="hidden",
+        outputs=[auth_state, chatbot, sources_panel, empty_panel, toast_box],
+        show_progress="minimal",
     )
 
     delete_conversation_button.click(
@@ -1591,9 +2257,10 @@ with gr.Blocks(
             conversation_list,
             chatbot,
             sources_panel,
+            empty_panel,
             toast_box,
         ],
-        show_progress="hidden",
+        show_progress="minimal",
     )
 
     send_button.click(
@@ -1605,6 +2272,7 @@ with gr.Blocks(
             chatbot,
             sources_html,
             sources_panel,
+            empty_panel,
             toast_box,
             conversation_list,
         ],
@@ -1620,6 +2288,7 @@ with gr.Blocks(
             chatbot,
             sources_html,
             sources_panel,
+            empty_panel,
             toast_box,
             conversation_list,
         ],
