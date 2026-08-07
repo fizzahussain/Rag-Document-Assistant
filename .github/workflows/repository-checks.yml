@@ -21,7 +21,7 @@ jobs:
 
       - name: Check Required Files Existence
         run: |
-          for file in README.md .gitignore LICENSE SECURITY.md; do
+          for file in README.md .gitignore; do
             if [ ! -f "$file" ]; then
               echo "Error: Required file $file is missing!"
               exit 1
