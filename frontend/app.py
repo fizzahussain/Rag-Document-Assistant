@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import html
 import mimetypes
 import os
@@ -1642,6 +1643,66 @@ body,
 }
 
 
+
+#attach-button {
+    flex: 0 0 46px !important;
+    width: 46px !important;
+    min-width: 46px !important;
+}
+
+#attach-button button {
+    width: 46px !important;
+    min-width: 46px !important;
+    height: 46px !important;
+    min-height: 46px !important;
+    border-radius: 14px !important;
+    border: 1px solid rgba(180, 106, 114, .28) !important;
+    background: rgba(247, 200, 211, .45) !important;
+    color: #2d3a47 !important;
+    font-size: 1.35rem !important;
+}
+
+.document-failure {
+    margin-top: 4px;
+    color: #9b4f5b;
+    font-size: .62rem;
+    line-height: 1.3;
+}
+
+#document-preview {
+    max-height: 46vh !important;
+    margin: 10px 24px !important;
+    padding: 18px !important;
+    overflow-y: auto !important;
+    border: 1px solid rgba(180, 106, 114, .22) !important;
+    border-radius: 16px !important;
+    background: rgba(255, 247, 230, .92) !important;
+    color: #2d3a47 !important;
+}
+
+#document-preview .pdf-preview {
+    width: 100%;
+    height: 42vh;
+    border: 0;
+    border-radius: 12px;
+    background: white;
+}
+
+#document-preview .preview-head {
+    margin-bottom: 10px;
+    color: #2d3a47;
+}
+
+#document-preview .preview-page {
+    margin-bottom: 16px;
+}
+
+#document-preview .preview-page pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+    color: #2d3a47;
+}
 """
 
 
@@ -1812,12 +1873,21 @@ def render_document_cards(documents: list[dict[str, Any]]) -> str:
         updated = parse_api_datetime(document.get("updated_at") or document.get("created_at"))
         date_label = updated.strftime("%d %b %Y") if updated else ""
         meta = " · ".join(part for part in (size, date_label) if part) or "Stored in your workspace"
+        failure_message = safe_text(document.get("failure_message"))
+        retryable = bool(document.get("retryable"))
+        failure_html = (
+            f'<div class="document-failure">{html.escape(failure_message)}'
+            f"{' · Retry available' if retryable else ''}</div>"
+            if status_key in {"failed", "error"} and failure_message
+            else ""
+        )
         cards.append(
             '<div class="document-card">'
             f'<div class="document-icon">{html.escape(document_icon(filename))}</div>'
             '<div class="document-info">'
             f'<div class="document-name" title="{html.escape(filename)}">{html.escape(filename)}</div>'
             f'<div class="document-meta">{html.escape(meta)}</div>'
+            f"{failure_html}"
             "</div>"
             f'<span class="status-badge status-{status_class}">'
             '<span class="status-dot"></span>'
@@ -2328,6 +2398,137 @@ def reprocess_document(
     yield (*outputs, message)
 
 
+def view_document(
+    state: dict[str, Any] | None,
+    document_id: str | None,
+):
+    current = state or empty_state()
+    clean_id = safe_text(document_id)
+    if not clean_id:
+        return (
+            gr.update(visible=False, value=""),
+            toast("info", "Choose a document", "Select a file before opening its preview."),
+        )
+
+    try:
+        preview_response = httpx.get(
+            f"{BACKEND_URL}/documents/{clean_id}/preview",
+            headers=auth_headers(current),
+            timeout=REQUEST_TIMEOUT,
+        )
+    except httpx.HTTPError:
+        return (
+            gr.update(visible=False, value=""),
+            toast("error", "Preview failed", backend_unavailable()),
+        )
+
+    if preview_response.status_code != 200:
+        return (
+            gr.update(visible=False, value=""),
+            toast("error", "Preview failed", friendly_api_error(preview_response)),
+        )
+
+    data = preview_response.json()
+    filename = safe_text(data.get("filename")) or "Document"
+    mime_type = safe_text(data.get("mime_type"))
+
+    if mime_type == "application/pdf":
+        try:
+            content_response = httpx.get(
+                f"{BACKEND_URL}/documents/{clean_id}/content",
+                headers=auth_headers(current),
+                timeout=REQUEST_TIMEOUT,
+            )
+        except httpx.HTTPError:
+            content_response = None
+
+        if content_response is not None and content_response.status_code == 200:
+            encoded = base64.b64encode(content_response.content).decode("ascii")
+            preview_html = (
+                '<div class="preview-head"><strong>'
+                f"{html.escape(filename)}</strong></div>"
+                '<iframe class="pdf-preview" '
+                f'src="data:application/pdf;base64,{encoded}"></iframe>'
+            )
+            return (
+                gr.update(visible=True, value=preview_html),
+                toast("success", "Document opened", f"Showing {filename}."),
+            )
+
+    pages = data.get("pages") if isinstance(data.get("pages"), list) else []
+    sections = [f'<div class="preview-head"><strong>{html.escape(filename)}</strong></div>']
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        page_number = page.get("page_number")
+        page_text = safe_text(page.get("text"))
+        sections.append(
+            f'<section class="preview-page"><h4>Page {page_number}</h4>'
+            f"<pre>{html.escape(page_text or 'No readable text on this page.')}</pre></section>"
+        )
+
+    return (
+        gr.update(visible=True, value="".join(sections)),
+        toast("success", "Document opened", f"Showing the full extracted content of {filename}."),
+    )
+
+
+def upload_chat_attachments(
+    state: dict[str, Any] | None,
+    files: list[Any] | Any | None,
+    selected_ids: list[str] | None,
+):
+    current = state or empty_state()
+    selected = [safe_text(item) for item in (selected_ids or []) if safe_text(item)]
+    paths = normalize_files(files)
+
+    if not current.get("access_token"):
+        outputs = load_documents(current, selected)
+        return (*outputs, toast("error", "Session expired", "Please log in again."))
+
+    if not paths:
+        outputs = load_documents(current, selected)
+        return (*outputs, toast("info", "No attachment", "Choose a document to attach."))
+
+    attached_ids: list[str] = []
+    failures: list[str] = []
+    for path in paths:
+        try:
+            with path.open("rb") as handle:
+                response = httpx.post(
+                    f"{BACKEND_URL}/documents/upload",
+                    headers=auth_headers(current),
+                    files={"file": (path.name, handle, "application/octet-stream")},
+                    timeout=REQUEST_TIMEOUT,
+                )
+        except (OSError, httpx.HTTPError):
+            failures.append(path.name)
+            continue
+
+        if response.status_code in {200, 201}:
+            document_id = safe_text(response.json().get("id"))
+            if document_id:
+                attached_ids.append(document_id)
+        else:
+            failures.append(f"{path.name}: {friendly_api_error(response)}")
+
+    updated_selected = list(dict.fromkeys([*selected, *attached_ids]))
+    outputs = load_documents(current, updated_selected)
+    if failures:
+        return (
+            *outputs,
+            toast("info", "Attachment upload completed", "; ".join(failures[:3])),
+        )
+    return (
+        *outputs,
+        toast(
+            "success",
+            "Attached to chat",
+            f"{len(attached_ids)} document(s) are ready for this chat.",
+        ),
+    )
+
+
 def update_selected_chips(
     selected_ids: list[str] | None,
     catalog: dict[str, str] | None,
@@ -2614,11 +2815,7 @@ def transcribe_voice(
         with path.open("rb") as audio_file:
             response = httpx.post(
                 STT_API_URL,
-                headers=(
-                    auth_headers(current)
-                    if current.get("access_token")
-                    else {}
-                ),
+                headers=(auth_headers(current) if current.get("access_token") else {}),
                 files={
                     "file": (
                         path.name,
@@ -2691,11 +2888,7 @@ def transcribe_voice(
         )
         return
 
-    merged = (
-        f"{current_question} {transcript}".strip()
-        if current_question
-        else transcript
-    )
+    merged = f"{current_question} {transcript}".strip() if current_question else transcript
 
     yield (
         False,
@@ -3118,9 +3311,10 @@ with gr.Blocks(
                             elem_id="manage-document",
                         )
                         with gr.Row(elem_classes=["sidebar-actions"]):
-                            reprocess_document_button = gr.Button("Reprocess")
+                            view_document_button = gr.Button("View")
+                            reprocess_document_button = gr.Button("Retry / Reprocess")
                             delete_document_button = gr.Button(
-                                "Delete document",
+                                "Delete",
                                 elem_id="delete-document",
                                 elem_classes=["danger-action"],
                             )
@@ -3171,6 +3365,12 @@ with gr.Blocks(
                 ) as sources_panel:
                     sources_html = gr.HTML("")
 
+                document_preview = gr.HTML(
+                    "",
+                    visible=False,
+                    elem_id="document-preview",
+                )
+
             with gr.Column(scale=0, elem_id="composer-shell"):
                 mention_menu = gr.Radio(
                     choices=[],
@@ -3211,6 +3411,15 @@ with gr.Blocks(
                 )
 
                 with gr.Row(elem_id="composer"):
+                    attach_button = gr.UploadButton(
+                        "+",
+                        file_count="multiple",
+                        file_types=SUPPORTED_FILE_TYPES,
+                        variant="secondary",
+                        scale=0,
+                        min_width=54,
+                        elem_id="attach-button",
+                    )
                     mention_button = gr.Button(
                         "@",
                         variant="secondary",
@@ -3360,6 +3569,28 @@ with gr.Blocks(
             toast_box,
         ],
         show_progress="hidden",
+    )
+
+    view_document_button.click(
+        view_document,
+        inputs=[auth_state, manage_document],
+        outputs=[document_preview, toast_box],
+        show_progress="minimal",
+    )
+
+    attach_button.upload(
+        upload_chat_attachments,
+        inputs=[auth_state, attach_button, selected_documents],
+        outputs=[
+            selected_documents,
+            manage_document,
+            document_cards,
+            document_catalog,
+            empty_panel,
+            selection_chips,
+            toast_box,
+        ],
+        show_progress="minimal",
     )
 
     selected_documents.change(

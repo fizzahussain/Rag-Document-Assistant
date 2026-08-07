@@ -18,6 +18,7 @@ class RetrievedSource(BaseModel):
     chunk_index: int
     score: float
     text: str
+    context_summary: str | None = None
 
 
 class RetrievalService:
@@ -131,4 +132,5 @@ class RetrievalService:
             chunk_index=chunk.chunk_index,
             score=score,
             text=chunk.text_content,
+            context_summary=chunk.context_summary,
         )

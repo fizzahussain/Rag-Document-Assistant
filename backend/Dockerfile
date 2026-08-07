@@ -1,8 +1,9 @@
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*
 RUN addgroup --system app && adduser --system --ingroup app app
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml README.md ./
 COPY backend ./backend
 COPY frontend ./frontend
 RUN pip install --no-cache-dir .

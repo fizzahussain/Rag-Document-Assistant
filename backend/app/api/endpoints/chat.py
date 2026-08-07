@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.config import settings
 from backend.app.core.exceptions import (
     AuthenticationError,
     DatabaseError,
@@ -23,7 +24,8 @@ from backend.app.schemas.chat import (
     MessageResponse,
 )
 from backend.app.schemas.common import ErrorResponse
-from backend.app.services.llm import LLMProviderFactory
+from backend.app.services.intent import classify_intent, direct_response
+from backend.app.services.llm import LLMProviderFactory, RAGAnswer
 from backend.app.services.retrieval import RetrievalService
 
 router = APIRouter(
@@ -54,28 +56,15 @@ async def get_active_user(
     """Return the authenticated active user"""
 
     try:
-        result = await db.execute(
-            select(User).where(
-                User.id == user_id,
-            )
-        )
+        result = await db.execute(select(User).where(User.id == user_id))
     except SQLAlchemyError as exc:
-        raise DatabaseError(
-            message="The user account could not be loaded",
-        ) from exc
+        raise DatabaseError(message="The user account could not be loaded") from exc
 
     user = result.scalar_one_or_none()
-
     if user is None:
-        raise AuthenticationError(
-            message="User account no longer exists",
-        )
-
+        raise AuthenticationError(message="User account no longer exists")
     if hasattr(user, "is_active") and not user.is_active:
-        raise AuthenticationError(
-            message="This user account is disabled",
-        )
-
+        raise AuthenticationError(message="This user account is disabled")
     return user
 
 
@@ -94,17 +83,11 @@ async def get_owned_conversation(
             )
         )
     except SQLAlchemyError as exc:
-        raise DatabaseError(
-            message="The conversation could not be loaded",
-        ) from exc
+        raise DatabaseError(message="The conversation could not be loaded") from exc
 
     conversation = result.scalar_one_or_none()
-
     if conversation is None:
-        raise NotFoundError(
-            message="Conversation not found",
-        )
-
+        raise NotFoundError(message="Conversation not found")
     return conversation
 
 
@@ -115,23 +98,14 @@ async def create_user_conversation(
 ) -> Conversation:
     """Create and persist a conversation"""
 
-    conversation = Conversation(
-        user_id=user_id,
-        title=title,
-    )
-
+    conversation = Conversation(user_id=user_id, title=title)
     db.add(conversation)
-
     try:
         await db.commit()
         await db.refresh(conversation)
     except SQLAlchemyError as exc:
         await db.rollback()
-
-        raise DatabaseError(
-            message="The conversation could not be created",
-        ) from exc
-
+        raise DatabaseError(message="The conversation could not be created") from exc
     return conversation
 
 
@@ -139,11 +113,48 @@ def build_conversation_title(message: str) -> str:
     """Build a concise title from the first user message"""
 
     normalized = " ".join(message.split())
-
     if len(normalized) <= 40:
         return normalized
-
     return f"{normalized[:37].rstrip()}..."
+
+
+async def load_conversation_history(
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+) -> list[dict[str, str]]:
+    """Load a bounded recent conversation history for follow-up context"""
+
+    limit = settings.CHAT_HISTORY_MESSAGES
+    if limit <= 0:
+        return []
+
+    try:
+        result = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc())
+            .limit(limit)
+        )
+    except SQLAlchemyError as exc:
+        raise DatabaseError(message="Conversation history could not be loaded") from exc
+
+    messages = list(reversed(result.scalars().all()))
+    return [
+        {"role": message.role, "content": message.content}
+        for message in messages
+        if message.role in {"user", "assistant"}
+    ]
+
+
+def contextual_retrieval_query(message: str, history: list[dict[str, str]]) -> str:
+    """Add recent conversational context to ambiguous follow-up retrieval"""
+
+    if not history:
+        return message
+
+    recent = history[-4:]
+    context = "\n".join(f"{item['role']}: {item['content'][:600]}" for item in recent)
+    return f"Conversation context:\n{context}\n\nCurrent question:\n{message}"
 
 
 @router.post(
@@ -151,8 +162,8 @@ def build_conversation_title(message: str) -> str:
     response_model=ChatResponse,
     summary="Ask a grounded question",
     description=(
-        "Retrieve relevant document chunks, generate a grounded answer, "
-        "and store the user and assistant messages."
+        "Route conversational intents, retrieve relevant document chunks when needed, "
+        "generate an answer, and store the conversation messages."
     ),
     responses={
         **COMMON_ERROR_RESPONSES,
@@ -167,12 +178,9 @@ async def chat(
     current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> ChatResponse:
-    """Generate and store a grounded assistant response"""
+    """Generate and store a conversational grounded assistant response"""
 
-    user = await get_active_user(
-        db=db,
-        user_id=current_user_id,
-    )
+    user = await get_active_user(db=db, user_id=current_user_id)
 
     if request.conversation_id is not None:
         conversation = await get_owned_conversation(
@@ -187,65 +195,65 @@ async def chat(
             title=build_conversation_title(request.message),
         )
 
-    try:
-        sources = await RetrievalService(db).search(
-            query=request.message,
-            user_id=current_user_id,
-            limit=request.top_k,
-            document_ids=request.document_ids,
-        )
-    except Exception as exc:
-        raise ServiceUnavailableError(
-            message="Relevant document content could not be retrieved",
-            details={
-                "service": "retrieval",
-            },
-        ) from exc
+    history = await load_conversation_history(db, conversation.id)
+    intent = classify_intent(request.message)
+    direct = direct_response(intent)
 
-    try:
-        provider = LLMProviderFactory.get_provider()
-
-        rag_result = await provider.generate_answer(
-            query=request.message,
-            sources=sources,
+    if direct is not None:
+        rag_result = RAGAnswer(
+            answer=direct,
+            citations=[],
+            retrieved_sources=[],
+            execution_time_seconds=0.0,
         )
-    except Exception as exc:
-        raise ServiceUnavailableError(
-            message="The language model could not generate an answer",
-            details={
-                "service": "llm",
-            },
-        ) from exc
+        sources = []
+    else:
+        retrieval_query = contextual_retrieval_query(request.message, history)
+        try:
+            sources = await RetrievalService(db).search(
+                query=retrieval_query,
+                user_id=current_user_id,
+                limit=request.top_k,
+                document_ids=request.document_ids,
+            )
+        except Exception as exc:
+            raise ServiceUnavailableError(
+                message="Relevant document content could not be retrieved",
+                details={"service": "retrieval"},
+            ) from exc
+
+        try:
+            provider = LLMProviderFactory.get_provider()
+            rag_result = await provider.generate_answer(
+                query=request.message,
+                sources=sources,
+                history=history,
+            )
+        except Exception as exc:
+            raise ServiceUnavailableError(
+                message="The language model could not generate an answer",
+                details={"service": "llm"},
+            ) from exc
 
     user_message = Message(
         conversation_id=conversation.id,
         role="user",
         content=request.message,
     )
-
     assistant_message = Message(
         conversation_id=conversation.id,
         role="assistant",
         content=rag_result.answer,
         retrieved_sources={"sources": [source.model_dump(mode="json") for source in sources]},
     )
-
-    db.add_all(
-        [
-            user_message,
-            assistant_message,
-        ]
-    )
+    db.add_all([user_message, assistant_message])
 
     try:
         await db.commit()
         await db.refresh(assistant_message)
     except SQLAlchemyError as exc:
         await db.rollback()
-
-        raise DatabaseError(
-            message="The conversation messages could not be saved",
-        ) from exc
+        raise DatabaseError(message="The conversation messages could not be saved") from exc
 
     return ChatResponse(
         conversation_id=conversation.id,

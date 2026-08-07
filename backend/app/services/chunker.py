@@ -4,52 +4,73 @@ import uuid
 
 from pydantic import BaseModel
 
+from backend.app.config import settings
 from backend.app.services.extractor import ExtractedDocument
 
 
 class ChunkPayload(BaseModel):
-    """Represents a clean, split chunk of text with location metadata."""
+    """Represent a document chunk and its rolling prior context"""
 
     chunk_id: uuid.UUID
     chunk_index: int
     page_number: int | None
     text: str
+    context_summary: str | None = None
     chunk_hash: str
 
 
 class TextChunker:
-    """Handles text cleaning, normalization, and recursive sliding-window chunking."""
+    """Clean text and create overlapping chunks with rolling context"""
 
-    def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50):
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+    def __init__(
+        self,
+        chunk_size: int | None = None,
+        chunk_overlap: int | None = None,
+        context_summary_enabled: bool | None = None,
+        context_summary_max_chars: int | None = None,
+    ) -> None:
+        self.chunk_size = chunk_size or settings.CHUNK_SIZE
+        self.chunk_overlap = settings.CHUNK_OVERLAP if chunk_overlap is None else chunk_overlap
+        self.context_summary_enabled = (
+            settings.CHUNK_CONTEXT_SUMMARY_ENABLED
+            if context_summary_enabled is None
+            else context_summary_enabled
+        )
+        self.context_summary_max_chars = (
+            context_summary_max_chars or settings.CHUNK_CONTEXT_SUMMARY_MAX_CHARS
+        )
+
+        if self.chunk_size <= 0:
+            raise ValueError("chunk_size must be greater than zero")
+        if self.chunk_overlap < 0 or self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be between 0 and chunk_size - 1")
 
     @staticmethod
     def clean_text(text: str) -> str:
-        """Cleans and normalizes text while preserving paragraph structure."""
+        """Normalize spacing while preserving paragraph boundaries"""
+
         if not text:
             return ""
-        # Remove spaces before newlines
+
         text = re.sub(r"[ \t]+\n", "\n", text)
-        # Replace multiple spaces/tabs with a single space
         text = re.sub(r"[ \t]+", " ", text)
-        # Replace 3 or more newlines with double newline
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
     def chunk_document(self, doc: ExtractedDocument) -> list[ChunkPayload]:
-        """Splits an extracted document into structured chunks with page numbers."""
+        """Split an extracted document while preserving page metadata"""
+
         chunks: list[ChunkPayload] = []
         global_chunk_idx = 0
+        rolling_summary = ""
 
-        # Process page by page to maintain accurate page numbers
         for page in doc.pages:
             cleaned_page_text = self.clean_text(page.text)
             if not cleaned_page_text:
                 continue
 
-            page_chunks_text = self._split_text(cleaned_page_text)
-            for page_chunk in page_chunks_text:
+            for page_chunk in self._split_text(cleaned_page_text):
+                context_summary = rolling_summary or None
                 chunk_hash = hashlib.sha256(page_chunk.encode("utf-8")).hexdigest()
                 chunks.append(
                     ChunkPayload(
@@ -60,65 +81,108 @@ class TextChunker:
                         chunk_index=global_chunk_idx,
                         page_number=page.page_number,
                         text=page_chunk,
+                        context_summary=context_summary,
                         chunk_hash=chunk_hash,
                     )
                 )
+
+                if self.context_summary_enabled:
+                    rolling_summary = self._update_rolling_summary(
+                        rolling_summary,
+                        page_chunk,
+                    )
+
                 global_chunk_idx += 1
 
         return chunks
 
+    def embedding_text(self, chunk: ChunkPayload) -> str:
+        """Return text used to embed a chunk with bounded prior context"""
+
+        if not chunk.context_summary:
+            return chunk.text
+
+        return (
+            f"Previous document context:\n{chunk.context_summary}\n\nCurrent chunk:\n{chunk.text}"
+        )
+
     def _split_text(self, text: str) -> list[str]:
-        """Recursively splits text using separators [\n\n, \n, . , space, ""] with overlap."""
+        """Split text into reliable character-overlap windows"""
+
         if len(text) <= self.chunk_size:
             return [text]
 
-        separators = ["\n\n", "\n", ". ", " ", ""]
-        return self._recursive_split(text, separators)
+        chunks: list[str] = []
+        start = 0
+        text_length = len(text)
 
-    def _recursive_split(self, text: str, separators: list[str]) -> list[str]:
-        final_chunks: list[str] = []
-        if not text.strip():
-            return final_chunks
+        while start < text_length:
+            hard_end = min(start + self.chunk_size, text_length)
+            end = hard_end
 
-        if len(text) <= self.chunk_size or not separators:
-            return [text.strip()]
+            if hard_end < text_length:
+                window = text[start:hard_end]
+                minimum_boundary = max(int(self.chunk_size * 0.55), 1)
+                boundary = self._best_boundary(window, minimum_boundary)
+                if boundary is not None:
+                    end = start + boundary
 
-        sep = separators[0]
-        splits = text.split(sep) if sep else list(text)
+            chunk = text[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
 
-        current_chunk: list[str] = []
-        current_len = 0
+            if end >= text_length:
+                break
 
-        for split in splits:
-            split_len = len(split) + len(sep)
-            if current_len + split_len > self.chunk_size:
-                if current_chunk:
-                    joined = sep.join(current_chunk).strip()
-                    if joined:
-                        final_chunks.append(joined)
+            next_start = max(0, end - self.chunk_overlap)
+            if next_start <= start:
+                next_start = end
 
-                # Apply sliding window overlap
-                if self.chunk_overlap > 0 and current_chunk:
-                    overlap_len = 0
-                    overlap_items: list[str] = []
-                    for item in reversed(current_chunk):
-                        if overlap_len + len(item) <= self.chunk_overlap:
-                            overlap_items.insert(0, item)
-                            overlap_len += len(item) + len(sep)
-                        else:
-                            break
-                    current_chunk = overlap_items
-                    current_len = sum(len(i) + len(sep) for i in current_chunk)
-                else:
-                    current_chunk = []
-                    current_len = 0
+            if self.chunk_overlap > 0:
+                while next_start > start and not text[next_start - 1].isspace():
+                    next_start -= 1
+                if next_start <= start:
+                    next_start = max(start + 1, end - self.chunk_overlap)
 
-            current_chunk.append(split)
-            current_len += split_len
+            start = next_start
 
-        if current_chunk:
-            joined = sep.join(current_chunk).strip()
-            if joined:
-                final_chunks.append(joined)
+        return chunks
 
-        return final_chunks
+    @staticmethod
+    def _best_boundary(window: str, minimum_boundary: int) -> int | None:
+        """Find a natural split point near the end of a chunk window"""
+
+        candidates: list[int] = []
+        for separator in ("\n\n", "\n", ". ", "? ", "! ", "; ", ", ", " "):
+            position = window.rfind(separator, minimum_boundary)
+            if position >= minimum_boundary:
+                candidates.append(position + len(separator))
+
+        return max(candidates) if candidates else None
+
+    def _update_rolling_summary(self, previous: str, current: str) -> str:
+        """Compress prior context into a bounded extractive rolling summary"""
+
+        combined = " ".join(part for part in (previous, current) if part).strip()
+        if len(combined) <= self.context_summary_max_chars:
+            return combined
+
+        sentences = [
+            item.strip() for item in re.split(r"(?<=[.!?])\s+|\n+", combined) if item.strip()
+        ]
+        if not sentences:
+            return combined[-self.context_summary_max_chars :].strip()
+
+        selected: list[str] = []
+        for sentence in [*sentences[:2], *sentences[-5:]]:
+            if sentence not in selected:
+                selected.append(sentence)
+
+        summary = " ".join(selected)
+        if len(summary) > self.context_summary_max_chars:
+            summary = summary[-self.context_summary_max_chars :]
+            first_space = summary.find(" ")
+            if first_space > 0:
+                summary = summary[first_space + 1 :]
+
+        return summary.strip()

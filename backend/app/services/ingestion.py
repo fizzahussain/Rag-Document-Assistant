@@ -41,6 +41,21 @@ class IngestionService:
         )
         await self.db.commit()
 
+    async def _mark_failed(
+        self,
+        document: Document,
+        code: str,
+        message: str,
+        retryable: bool,
+    ) -> None:
+        await self.db.rollback()
+        document.status = "failed"
+        document.failure_code = code
+        document.failure_message = message[:4000]
+        document.retryable = retryable
+        await self.db.commit()
+        await self._audit(document.id, "ingest", "failed", message)
+
     async def process_document(
         self,
         document_id: uuid.UUID,
@@ -56,6 +71,9 @@ class IngestionService:
             raise NotFoundError("Document not found")
 
         try:
+            document.failure_code = None
+            document.failure_message = None
+            document.retryable = False
             document.status = "extracting"
             await self.db.commit()
 
@@ -70,7 +88,11 @@ class IngestionService:
             await self.db.commit()
 
             chunks = self.chunker.chunk_document(extracted)
-            vectors = await self.embedder.embed_texts([item.text for item in chunks])
+            if not chunks:
+                raise ExtractionError("No searchable chunks could be created from the document")
+
+            embedding_inputs = [self.chunker.embedding_text(item) for item in chunks]
+            vectors = await self.embedder.embed_texts(embedding_inputs)
 
             document.status = "indexing"
             await self.db.commit()
@@ -93,6 +115,7 @@ class IngestionService:
                         chunk_index=payload.chunk_index,
                         page_number=payload.page_number,
                         text_content=payload.text,
+                        context_summary=payload.context_summary,
                         chunk_hash=payload.chunk_hash,
                         embedding=vector,
                     )
@@ -100,22 +123,30 @@ class IngestionService:
 
             self.db.add_all(db_chunks)
             document.status = "ready"
+            document.failure_code = None
+            document.failure_message = None
+            document.retryable = False
             await self.db.commit()
             await self.db.refresh(document)
             await self._audit(document.id, "ingest", "success")
             return document
 
         except OCRRequiredError as exc:
-            await self.db.rollback()
-            document.status = "failed"
-            await self.db.commit()
-            await self._audit(document.id, "ingest", "failed", str(exc))
+            await self._mark_failed(
+                document,
+                code="ocr_required",
+                message=str(exc),
+                retryable=True,
+            )
             raise
         except Exception as exc:
-            await self.db.rollback()
-            document.status = "failed"
-            await self.db.commit()
-            await self._audit(document.id, "ingest", "failed", str(exc))
+            message = str(exc) or exc.__class__.__name__
+            await self._mark_failed(
+                document,
+                code="processing_failed",
+                message=message,
+                retryable=True,
+            )
             logger.exception("Document ingestion failed", document_id=str(document.id))
             raise ExtractionError("Document ingestion failed") from exc
 
@@ -130,9 +161,32 @@ class IngestionService:
         if document is None:
             raise NotFoundError("Document not found")
 
+        previous_status = document.status if document.status != "deleting" else "failed"
         document.status = "deleting"
+        document.failure_code = None
+        document.failure_message = None
+        document.retryable = False
         await self.db.commit()
-        await self.storage.delete_file(document.storage_path)
-        await self.db.delete(document)
-        await self.db.commit()
-        await self._audit(None, "delete", "success")
+
+        try:
+            await self.storage.delete_file(document.storage_path)
+            await self.db.delete(document)
+            await self.db.commit()
+            await self._audit(None, "delete", "success")
+        except Exception as exc:
+            await self.db.rollback()
+            result = await self.db.execute(
+                select(Document).where(
+                    Document.id == document_id,
+                    Document.user_id == user_id,
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if existing is not None:
+                existing.status = previous_status
+                existing.failure_code = "delete_failed"
+                existing.failure_message = str(exc)[:4000]
+                existing.retryable = True
+                await self.db.commit()
+            logger.exception("Document deletion failed", document_id=str(document_id))
+            raise

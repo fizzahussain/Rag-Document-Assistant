@@ -10,6 +10,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from pydantic import BaseModel
 
+from backend.app.config import settings
 from backend.app.core.exceptions import ExtractionError, OCRRequiredError
 
 
@@ -37,7 +38,39 @@ class BaseExtractor(ABC):
 
 
 class PDFExtractor(BaseExtractor):
-    """Extract text from text-based PDF files"""
+    """Extract PDF text and selectively OCR pages that need it"""
+
+    @staticmethod
+    def _clean_char_count(text: str) -> int:
+        return len("".join(text.split()))
+
+    def _extract_page_text(self, page: fitz.Page, page_number: int) -> tuple[str, str]:
+        native_text = page.get_text("text").strip()
+        if self._clean_char_count(native_text) >= settings.OCR_MIN_TEXT_CHARS:
+            return native_text, "native"
+
+        if not settings.OCR_ENABLED:
+            return native_text, "native"
+
+        try:
+            text_page = page.get_textpage_ocr(
+                language=settings.OCR_LANGUAGE,
+                dpi=settings.OCR_DPI,
+                full=True,
+            )
+            ocr_text = page.get_text("text", textpage=text_page).strip()
+        except Exception as exc:
+            if native_text:
+                return native_text, "native"
+            raise OCRRequiredError(
+                f"Page {page_number} requires OCR, but local Tesseract OCR is unavailable "
+                "or failed. Install Tesseract and ensure its language data is accessible."
+            ) from exc
+
+        if self._clean_char_count(ocr_text) > self._clean_char_count(native_text):
+            return ocr_text, "ocr"
+
+        return native_text, "native"
 
     def extract(self, file_bytes: bytes, filename: str) -> ExtractedDocument:
         document = None
@@ -46,12 +79,15 @@ class PDFExtractor(BaseExtractor):
             document = fitz.open(stream=file_bytes, filetype="pdf")
             pages: list[ExtractedPage] = []
             full_text_list: list[str] = []
+            ocr_pages: list[int] = []
+            native_pages: list[int] = []
 
             for page_index, page in enumerate(document):
-                page_text = page.get_text("text").strip()
+                page_number = page_index + 1
+                page_text, method = self._extract_page_text(page, page_number)
                 pages.append(
                     ExtractedPage(
-                        page_number=page_index + 1,
+                        page_number=page_number,
                         text=page_text,
                     )
                 )
@@ -59,22 +95,28 @@ class PDFExtractor(BaseExtractor):
                 if page_text:
                     full_text_list.append(page_text)
 
-            full_text = "\n\n".join(full_text_list).strip()
-            total_clean_chars = len(full_text.replace(" ", "").replace("\n", ""))
+                if method == "ocr":
+                    ocr_pages.append(page_number)
+                else:
+                    native_pages.append(page_number)
 
-            if total_clean_chars < 30:
-                message = (
-                    f"PDF document '{filename}' contains little or no "
-                    f"extractable text ({total_clean_chars} chars). "
-                    "OCR processing is required."
+            full_text = "\n\n".join(full_text_list).strip()
+            total_clean_chars = self._clean_char_count(full_text)
+
+            if total_clean_chars < settings.OCR_MIN_TEXT_CHARS:
+                raise OCRRequiredError(
+                    f"PDF document '{filename}' contains little or no readable text "
+                    f"after extraction ({total_clean_chars} chars)."
                 )
-                raise OCRRequiredError(message)
 
             metadata = {
                 "page_count": len(document),
                 "author": document.metadata.get("author", ""),
                 "title": document.metadata.get("title", ""),
                 "format": "PDF",
+                "ocr_pages": ocr_pages,
+                "native_text_pages": native_pages,
+                "ocr_enabled": settings.OCR_ENABLED,
             }
 
             return ExtractedDocument(

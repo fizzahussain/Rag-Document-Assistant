@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 
 import anyio
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,9 +29,12 @@ from backend.app.models.user import User
 from backend.app.schemas.common import ErrorResponse
 from backend.app.schemas.document import (
     DocumentChunkResponse,
+    DocumentPreviewPage,
+    DocumentPreviewResponse,
     DocumentResponse,
     DocumentStatusResponse,
 )
+from backend.app.services.extractor import ExtractorFactory
 from backend.app.services.ingestion import IngestionService
 from backend.app.services.storage import StorageService
 
@@ -447,6 +450,79 @@ async def get_document_status(
         status=document.status,
         file_size=document.file_size,
         updated_at=document.updated_at,
+        failure_code=document.failure_code,
+        failure_message=document.failure_message,
+        retryable=document.retryable,
+    )
+
+
+@router.get(
+    "/{document_id}/content",
+    summary="Open original document",
+    description="Return the original stored file for an authenticated owner.",
+    responses=ERROR_RESPONSES,
+)
+async def get_document_content(
+    document_id: uuid.UUID,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Return original document bytes for an owned document"""
+
+    document = await get_owned_document(
+        db=db,
+        document_id=document_id,
+        user_id=current_user_id,
+    )
+    file_bytes = await StorageService().read_file(document.storage_path)
+    safe_filename = document.filename.replace('"', "")
+    return Response(
+        content=file_bytes,
+        media_type=document.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
+    )
+
+
+@router.get(
+    "/{document_id}/preview",
+    response_model=DocumentPreviewResponse,
+    summary="Preview a document",
+    description="Return the full extracted document text for an owned document.",
+    responses=ERROR_RESPONSES,
+)
+async def preview_document(
+    document_id: uuid.UUID,
+    current_user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentPreviewResponse:
+    """Return a full authenticated text preview of a stored document"""
+
+    document = await get_owned_document(
+        db=db,
+        document_id=document_id,
+        user_id=current_user_id,
+    )
+    storage = StorageService()
+    try:
+        file_bytes = await storage.read_file(document.storage_path)
+        extracted = ExtractorFactory.get_extractor(document.filename).extract(
+            file_bytes,
+            document.filename,
+        )
+    except Exception as exc:
+        raise StorageError(
+            message="The document preview could not be prepared",
+        ) from exc
+
+    return DocumentPreviewResponse(
+        id=document.id,
+        filename=document.filename,
+        mime_type=document.mime_type,
+        pages=[
+            DocumentPreviewPage(page_number=page.page_number, text=page.text)
+            for page in extracted.pages
+        ],
+        metadata=extracted.metadata,
     )
 
 
@@ -514,15 +590,22 @@ async def reprocess_document(
         user_id=current_user_id,
     )
 
-    if document.status in {
-        "processing",
-        "deleting",
-    }:
+    if document.status == "deleting":
         raise ValidationError(
-            message=(f"Document cannot be reprocessed while its status is '{document.status}'"),
+            message="Document cannot be reprocessed while deletion is in progress",
             details={
                 "document_id": str(document.id),
                 "status": document.status,
+            },
+        )
+
+    if document.status == "failed" and not document.retryable:
+        raise ValidationError(
+            message=document.failure_message or "This failure is not retryable",
+            details={
+                "document_id": str(document.id),
+                "failure_code": document.failure_code,
+                "retryable": False,
             },
         )
 
@@ -552,19 +635,11 @@ async def delete_document(
 ) -> None:
     """Delete an owned document and its associated data"""
 
-    document = await get_owned_document(
+    await get_owned_document(
         db=db,
         document_id=document_id,
         user_id=current_user_id,
     )
-
-    if document.status == "deleting":
-        raise ValidationError(
-            message="Document deletion is already in progress",
-            details={
-                "document_id": str(document.id),
-            },
-        )
 
     storage = StorageService()
     ingestion = IngestionService(

@@ -43,6 +43,18 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIMENSION: int = 1536
 
+    CHUNK_SIZE: int = 800
+    CHUNK_OVERLAP: int = 120
+    CHUNK_CONTEXT_SUMMARY_ENABLED: bool = True
+    CHUNK_CONTEXT_SUMMARY_MAX_CHARS: int = 700
+
+    CHAT_HISTORY_MESSAGES: int = 8
+
+    OCR_ENABLED: bool = True
+    OCR_LANGUAGE: str = "eng"
+    OCR_DPI: int = 200
+    OCR_MIN_TEXT_CHARS: int = 30
+
     LLM_PROVIDER: str = "mock"
     LLM_MODEL: str = "gpt-4o-mini"
     OPENAI_API_KEY: SecretStr | None = None
@@ -218,6 +230,24 @@ class Settings(BaseSettings):
 
         if self.MAX_AUDIO_SIZE_MB <= 0:
             raise ValueError("MAX_AUDIO_SIZE_MB must be greater than zero")
+
+        if self.CHUNK_SIZE <= 0:
+            raise ValueError("CHUNK_SIZE must be greater than zero")
+
+        if self.CHUNK_OVERLAP < 0 or self.CHUNK_OVERLAP >= self.CHUNK_SIZE:
+            raise ValueError("CHUNK_OVERLAP must be between 0 and CHUNK_SIZE - 1")
+
+        if self.CHUNK_CONTEXT_SUMMARY_MAX_CHARS <= 0:
+            raise ValueError("CHUNK_CONTEXT_SUMMARY_MAX_CHARS must be greater than zero")
+
+        if self.CHAT_HISTORY_MESSAGES < 0:
+            raise ValueError("CHAT_HISTORY_MESSAGES must not be negative")
+
+        if self.OCR_DPI <= 0:
+            raise ValueError("OCR_DPI must be greater than zero")
+
+        if self.OCR_MIN_TEXT_CHARS < 0:
+            raise ValueError("OCR_MIN_TEXT_CHARS must not be negative")
 
         if self.TRANSCRIPTION_BEAM_SIZE <= 0:
             raise ValueError("TRANSCRIPTION_BEAM_SIZE must be greater than zero")

@@ -28,6 +28,9 @@ class Document(Base):
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
     extraction_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retryable: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -61,6 +64,7 @@ class DocumentChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     text_content: Mapped[str] = mapped_column(Text, nullable=False)
+    context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     chunk_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(settings.EMBEDDING_DIMENSION),
