@@ -208,7 +208,13 @@ async def chat(
         )
         sources = []
     else:
-        retrieval_query = contextual_retrieval_query(request.message, history)
+        try:
+            provider = LLMProviderFactory.get_provider()
+            retrieval_query = await provider.rewrite_query(request.message, history)
+        except Exception:
+            retrieval_query = contextual_retrieval_query(request.message, history)
+            provider = LLMProviderFactory.get_provider()
+
         try:
             sources = await RetrievalService(db).search(
                 query=retrieval_query,
@@ -223,9 +229,8 @@ async def chat(
             ) from exc
 
         try:
-            provider = LLMProviderFactory.get_provider()
             rag_result = await provider.generate_answer(
-                query=request.message,
+                query=retrieval_query,
                 sources=sources,
                 history=history,
             )

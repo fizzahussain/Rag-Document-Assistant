@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 120
     CHUNK_CONTEXT_SUMMARY_ENABLED: bool = True
     CHUNK_CONTEXT_SUMMARY_MAX_CHARS: int = 700
+    CHUNK_CONTEXT_LLM_STRIDE: int = 12
 
     CHAT_HISTORY_MESSAGES: int = 8
 
@@ -239,6 +240,9 @@ class Settings(BaseSettings):
 
         if self.CHUNK_CONTEXT_SUMMARY_MAX_CHARS <= 0:
             raise ValueError("CHUNK_CONTEXT_SUMMARY_MAX_CHARS must be greater than zero")
+
+        if self.CHUNK_CONTEXT_LLM_STRIDE <= 0:
+            raise ValueError("CHUNK_CONTEXT_LLM_STRIDE must be greater than zero")
 
         if self.CHAT_HISTORY_MESSAGES < 0:
             raise ValueError("CHAT_HISTORY_MESSAGES must not be negative")

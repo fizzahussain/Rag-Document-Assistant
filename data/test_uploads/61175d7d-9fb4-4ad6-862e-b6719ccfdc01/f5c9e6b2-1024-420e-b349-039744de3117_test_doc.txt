@@ -1,1 +1,0 @@
-FastAPI supports document upload and retrieval testing.

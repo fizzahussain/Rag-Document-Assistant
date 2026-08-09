@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import html
+import json
 import mimetypes
 import os
 import re
@@ -70,7 +71,16 @@ READY_STATUSES = {
     "success",
     "available",
 }
-PROCESSING_STATUSES = {"processing", "pending", "queued", "uploading", "indexing"}
+PROCESSING_STATUSES = {
+    "processing",
+    "pending",
+    "queued",
+    "uploading",
+    "extracting",
+    "chunking",
+    "embedding",
+    "indexing",
+}
 
 EMPTY_STATE: dict[str, Any] = {
     "access_token": "",
@@ -444,7 +454,7 @@ select {
     overflow-y: auto !important;
 }
 
-.document-card {
+.document-card-info {
     display: grid;
     grid-template-columns: 32px minmax(0, 1fr) auto;
     gap: 8px;
@@ -529,12 +539,6 @@ select {
     overflow-y: auto !important;
 }
 
-.sidebar-actions {
-    gap: 7px !important;
-    margin-top: 7px !important;
-}
-
-.sidebar-actions button,
 #refresh-documents button,
 #delete-conversation button,
 #logout button {
@@ -544,7 +548,6 @@ select {
     color: var(--text-soft) !important;
 }
 
-#delete-document button,
 .danger-action button {
     border-color: rgba(147, 77, 75, .22) !important;
     color: var(--danger) !important;
@@ -674,6 +677,12 @@ select {
     background: rgba(130, 102, 50, .09);
     color: var(--text-soft);
     font-size: .74rem;
+}
+
+#empty-state-panel .prompt-pill {
+    pointer-events: auto !important;
+    cursor: pointer !important;
+    user-select: none;
 }
 
 #chatbot {
@@ -1253,7 +1262,7 @@ body,
 
 #conversation-list label,
 #selected-documents label,
-.document-card {
+.document-card-info {
     background: rgba(255, 255, 255, .46) !important;
 }
 
@@ -1274,8 +1283,7 @@ body,
 
 #logout button,
 #refresh-documents button,
-#delete-conversation button,
-.sidebar-actions button {
+#delete-conversation button {
     background: rgba(45, 58, 71, .86) !important;
     color: white !important;
 }
@@ -1669,40 +1677,80 @@ body,
     line-height: 1.3;
 }
 
-#document-preview {
-    max-height: 46vh !important;
-    margin: 10px 24px !important;
-    padding: 18px !important;
-    overflow-y: auto !important;
-    border: 1px solid rgba(180, 106, 114, .22) !important;
-    border-radius: 16px !important;
-    background: rgba(255, 247, 230, .92) !important;
-    color: #2d3a47 !important;
+#document-open-file {
+    display: none !important;
 }
 
-#document-preview .pdf-preview {
-    width: 100%;
-    height: 42vh;
-    border: 0;
-    border-radius: 12px;
-    background: white;
+.document-inline-card {
+    gap: 2px !important;
+    margin-bottom: 7px !important;
+    padding: 8px 9px 7px !important;
+    border: 1px solid rgba(180, 106, 114, .17) !important;
+    border-radius: 11px !important;
+    background: rgba(255, 255, 255, .48) !important;
 }
 
-#document-preview .preview-head {
-    margin-bottom: 10px;
-    color: #2d3a47;
+.document-inline-card .document-card-info {
+    display: grid !important;
+    grid-template-columns: 32px minmax(0, 1fr) auto !important;
+    gap: 8px !important;
+    align-items: center !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
 }
 
-#document-preview .preview-page {
-    margin-bottom: 16px;
+.document-inline-actions {
+    min-height: 25px !important;
+    margin: -1px 0 0 40px !important;
+    gap: 9px !important;
+    align-items: center !important;
 }
 
-#document-preview .preview-page pre {
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-family: inherit;
-    color: #2d3a47;
+.document-inline-actions button {
+    min-height: 21px !important;
+    height: 21px !important;
+    padding: 0 !important;
+    box-shadow: none !important;
 }
+
+.document-text-action button {
+    width: auto !important;
+    min-width: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: #7c5960 !important;
+    font-size: .58rem !important;
+    font-weight: 650 !important;
+    text-decoration: underline !important;
+    text-underline-offset: 2px !important;
+}
+
+.document-text-action button:hover {
+    color: #b46a72 !important;
+}
+
+.document-delete-action button {
+    color: #9b4f5b !important;
+}
+
+.document-retry-action button {
+    width: 24px !important;
+    min-width: 24px !important;
+    height: 24px !important;
+    min-height: 24px !important;
+    border: 1px solid rgba(180, 106, 114, .30) !important;
+    border-radius: 999px !important;
+    background: rgba(247, 200, 211, .38) !important;
+    color: #9b4f5b !important;
+    font-size: .9rem !important;
+    line-height: 1 !important;
+}
+
+.document-retry-action button:hover {
+    background: rgba(247, 200, 211, .72) !important;
+}
+
 """
 
 
@@ -1846,55 +1894,69 @@ def document_icon(filename: str) -> str:
     return (suffix or "FILE")[:4].upper()
 
 
-def render_document_cards(documents: list[dict[str, Any]]) -> str:
-    if not documents:
-        return (
-            '<div class="document-empty">No documents yet.<br>'
-            "Upload a PDF, DOCX, TXT, MD, or JSON file.</div>"
-        )
+def friendly_document_failure(document: dict[str, Any]) -> str:
+    message = safe_text(document.get("failure_message"))
+    code = safe_text(document.get("failure_code")).lower()
+    blocked = (
+        "sqlalchemy",
+        "asyncpg",
+        "integrityerror",
+        "uniqueviolation",
+        "traceback",
+        "insert into",
+        "parameters:",
+    )
 
-    cards: list[str] = []
-    for document in documents:
-        filename = safe_text(document.get("filename")) or "Untitled document"
-        status_key = document_status(document)
-        status_label = status_key.replace("_", " ").title()
-        status_class = (
-            "ready"
-            if status_key in READY_STATUSES
-            else "processing"
-            if status_key in PROCESSING_STATUSES
-            else "failed"
-            if status_key in {"failed", "error"}
-            else "pending"
-        )
-        size = format_file_size(
-            document.get("size_bytes") or document.get("file_size") or document.get("size")
-        )
-        updated = parse_api_datetime(document.get("updated_at") or document.get("created_at"))
-        date_label = updated.strftime("%d %b %Y") if updated else ""
-        meta = " · ".join(part for part in (size, date_label) if part) or "Stored in your workspace"
-        failure_message = safe_text(document.get("failure_message"))
-        retryable = bool(document.get("retryable"))
-        failure_html = (
-            f'<div class="document-failure">{html.escape(failure_message)}'
-            f"{' · Retry available' if retryable else ''}</div>"
-            if status_key in {"failed", "error"} and failure_message
-            else ""
-        )
-        cards.append(
-            '<div class="document-card">'
-            f'<div class="document-icon">{html.escape(document_icon(filename))}</div>'
-            '<div class="document-info">'
-            f'<div class="document-name" title="{html.escape(filename)}">{html.escape(filename)}</div>'
-            f'<div class="document-meta">{html.escape(meta)}</div>'
-            f"{failure_html}"
-            "</div>"
-            f'<span class="status-badge status-{status_class}">'
-            '<span class="status-dot"></span>'
-            f"{html.escape(status_label)}</span>"
-            "</div>"
-        )
-    return "".join(cards)
+    if code == "ocr_required" and message:
+        return message
+    if message and not any(item in message.lower() for item in blocked):
+        return message
+    if code == "delete_failed":
+        return "The document could not be deleted. Please try again."
+    return "Processing failed. Retry the document."
+
+
+def render_document_card_info(document: dict[str, Any]) -> str:
+    """Render document metadata used by the dynamic document list"""
+
+    filename = safe_text(document.get("filename")) or "Untitled document"
+    status_key = document_status(document)
+    status_label = status_key.replace("_", " ").title()
+    status_class = (
+        "ready"
+        if status_key in READY_STATUSES
+        else "processing"
+        if status_key in PROCESSING_STATUSES
+        else "failed"
+        if status_key in {"failed", "error"}
+        else "pending"
+    )
+    size = format_file_size(
+        document.get("size_bytes") or document.get("file_size") or document.get("size")
+    )
+    updated = parse_api_datetime(document.get("updated_at") or document.get("created_at"))
+    date_label = updated.strftime("%d %b %Y") if updated else ""
+    meta = " · ".join(part for part in (size, date_label) if part) or "Stored in your workspace"
+    failure_message = friendly_document_failure(document)
+    failure_html = (
+        f'<div class="document-failure">{html.escape(failure_message)}</div>'
+        if status_key in {"failed", "error"} and failure_message
+        else ""
+    )
+
+    return (
+        '<div class="document-card-info">'
+        f'<div class="document-icon">{html.escape(document_icon(filename))}</div>'
+        '<div class="document-info">'
+        f'<div class="document-name" title="{html.escape(filename)}">{html.escape(filename)}</div>'
+        f'<div class="document-meta">{html.escape(meta)}</div>'
+        f"{failure_html}"
+        "</div>"
+        f'<span class="status-badge status-{status_class}">'
+        '<span class="status-dot"></span>'
+        f"{html.escape(status_label)}</span>"
+        "</div>"
+    )
 
 
 def render_selected_chips(selected_ids: list[str] | None, catalog: dict[str, str] | None) -> str:
@@ -1946,10 +2008,10 @@ def render_empty_state(documents: list[dict[str, Any]]) -> str:
         "<h2>Ask better questions of your documents</h2>"
         f"<p>{html.escape(description)}</p>"
         '<div class="prompt-suggestions">'
-        '<span class="prompt-pill">Summarize the key findings</span>'
-        '<span class="prompt-pill">Compare the uploaded reports</span>'
-        '<span class="prompt-pill">List decisions and action items</span>'
-        '<span class="prompt-pill">Find evidence for a claim</span>'
+        '<button type="button" class="prompt-pill" data-prompt="Summarize the key findings">Summarize the key findings</button>'
+        '<button type="button" class="prompt-pill" data-prompt="Compare the uploaded reports">Compare the uploaded reports</button>'
+        '<button type="button" class="prompt-pill" data-prompt="List decisions and action items">List decisions and action items</button>'
+        '<button type="button" class="prompt-pill" data-prompt="Find evidence for a claim">Find evidence for a claim</button>'
         "</div></div>"
     )
 
@@ -1960,14 +2022,12 @@ def document_updates(
 ):
     catalog: dict[str, str] = {}
     ready_choices: list[tuple[str, str]] = []
-    manage_choices: list[tuple[str, str]] = []
 
     for document in documents:
         filename = safe_text(document.get("filename")) or "Untitled document"
         document_id = safe_text(document.get("id"))
         if not document_id:
             continue
-        manage_choices.append((filename, document_id))
         if is_ready(document):
             catalog[document_id] = filename
             ready_choices.append((filename, document_id))
@@ -1980,8 +2040,8 @@ def document_updates(
 
     return (
         gr.update(choices=ready_choices, value=selected),
-        gr.update(choices=manage_choices, value=None),
-        render_document_cards(documents),
+        None,
+        documents,
         catalog,
         render_empty_state(documents),
         render_selected_chips(selected, catalog),
@@ -2329,6 +2389,11 @@ def delete_document(
     selected_ids: list[str] | None,
 ):
     current = state or empty_state()
+    if current.get("__cancel_delete"):
+        current = {key: value for key, value in current.items() if key != "__cancel_delete"}
+        outputs = load_documents(current, selected_ids)
+        return (*outputs, "")
+
     clean_id = safe_text(document_id)
     if not clean_id:
         outputs = load_documents(current, selected_ids)
@@ -2398,79 +2463,44 @@ def reprocess_document(
     yield (*outputs, message)
 
 
-def view_document(
+def prepare_document_open(
     state: dict[str, Any] | None,
     document_id: str | None,
 ):
+    """Fetch an owned document and prepare browser-inline preview data"""
+
     current = state or empty_state()
     clean_id = safe_text(document_id)
     if not clean_id:
-        return (
-            gr.update(visible=False, value=""),
-            toast("info", "Choose a document", "Select a file before opening its preview."),
-        )
+        return "", toast("info", "Document unavailable", "No document was selected.")
 
     try:
-        preview_response = httpx.get(
-            f"{BACKEND_URL}/documents/{clean_id}/preview",
+        response = httpx.get(
+            f"{BACKEND_URL}/documents/{clean_id}/content",
             headers=auth_headers(current),
             timeout=REQUEST_TIMEOUT,
         )
     except httpx.HTTPError:
-        return (
-            gr.update(visible=False, value=""),
-            toast("error", "Preview failed", backend_unavailable()),
-        )
+        return "", toast("error", "Open failed", backend_unavailable())
 
-    if preview_response.status_code != 200:
-        return (
-            gr.update(visible=False, value=""),
-            toast("error", "Preview failed", friendly_api_error(preview_response)),
-        )
+    if response.status_code != 200:
+        return "", toast("error", "Open failed", friendly_api_error(response))
 
-    data = preview_response.json()
-    filename = safe_text(data.get("filename")) or "Document"
-    mime_type = safe_text(data.get("mime_type"))
-
-    if mime_type == "application/pdf":
-        try:
-            content_response = httpx.get(
-                f"{BACKEND_URL}/documents/{clean_id}/content",
-                headers=auth_headers(current),
-                timeout=REQUEST_TIMEOUT,
-            )
-        except httpx.HTTPError:
-            content_response = None
-
-        if content_response is not None and content_response.status_code == 200:
-            encoded = base64.b64encode(content_response.content).decode("ascii")
-            preview_html = (
-                '<div class="preview-head"><strong>'
-                f"{html.escape(filename)}</strong></div>"
-                '<iframe class="pdf-preview" '
-                f'src="data:application/pdf;base64,{encoded}"></iframe>'
-            )
-            return (
-                gr.update(visible=True, value=preview_html),
-                toast("success", "Document opened", f"Showing {filename}."),
-            )
-
-    pages = data.get("pages") if isinstance(data.get("pages"), list) else []
-    sections = [f'<div class="preview-head"><strong>{html.escape(filename)}</strong></div>']
-    for page in pages:
-        if not isinstance(page, dict):
-            continue
-        page_number = page.get("page_number")
-        page_text = safe_text(page.get("text"))
-        sections.append(
-            f'<section class="preview-page"><h4>Page {page_number}</h4>'
-            f"<pre>{html.escape(page_text or 'No readable text on this page.')}</pre></section>"
-        )
-
-    return (
-        gr.update(visible=True, value="".join(sections)),
-        toast("success", "Document opened", f"Showing the full extracted content of {filename}."),
-    )
+    disposition = response.headers.get("content-disposition", "")
+    filename_match = re.search(r'filename="?([^";]+)', disposition, flags=re.IGNORECASE)
+    filename = filename_match.group(1).strip() if filename_match else f"document-{clean_id}"
+    filename = Path(filename).name or f"document-{clean_id}"
+    media_type = response.headers.get("content-type") or ""
+    media_type = media_type.split(";", 1)[0].strip().lower()
+    guessed_type = mimetypes.guess_type(filename)[0]
+    if not media_type or media_type == "application/octet-stream":
+        media_type = guessed_type or "application/octet-stream"
+    payload = {
+        "name": filename,
+        "mime": media_type or "application/octet-stream",
+        "data": base64.b64encode(response.content).decode("ascii"),
+    }
+    return json.dumps(payload), toast("success", "Opening document", filename)
 
 
 def upload_chat_attachments(
@@ -3275,10 +3305,9 @@ with gr.Blocks(
                         variant="primary",
                         elem_id="upload-button",
                     )
-                    document_cards = gr.HTML(
-                        render_document_cards([]),
-                        elem_id="document-cards",
-                    )
+                    documents_state = gr.State([])
+                    manage_document = gr.State(None)
+                    document_list_container = gr.Column(elem_id="document-cards")
                     refresh_documents_button = gr.Button(
                         "Refresh processing status",
                         elem_id="refresh-documents",
@@ -3296,28 +3325,6 @@ with gr.Blocks(
                         container=False,
                         elem_id="selected-documents",
                     )
-
-                    with gr.Accordion(
-                        "Document actions",
-                        open=False,
-                        elem_id="document-actions",
-                    ):
-                        manage_document = gr.Dropdown(
-                            choices=[],
-                            value=None,
-                            label="Choose a document",
-                            show_label=False,
-                            container=False,
-                            elem_id="manage-document",
-                        )
-                        with gr.Row(elem_classes=["sidebar-actions"]):
-                            view_document_button = gr.Button("View")
-                            reprocess_document_button = gr.Button("Retry / Reprocess")
-                            delete_document_button = gr.Button(
-                                "Delete",
-                                elem_id="delete-document",
-                                elem_classes=["danger-action"],
-                            )
 
             with gr.Column(scale=0, elem_id="account-area"):
                 account_summary = gr.Markdown("", elem_id="account-card")
@@ -3364,12 +3371,6 @@ with gr.Blocks(
                     elem_id="sources-panel",
                 ) as sources_panel:
                     sources_html = gr.HTML("")
-
-                document_preview = gr.HTML(
-                    "",
-                    visible=False,
-                    elem_id="document-preview",
-                )
 
             with gr.Column(scale=0, elem_id="composer-shell"):
                 mention_menu = gr.Radio(
@@ -3454,6 +3455,139 @@ with gr.Blocks(
                         elem_id="send-button",
                     )
 
+    document_open_file = gr.Textbox(visible=False, elem_id="document-open-file")
+
+    with document_list_container:
+
+        @gr.render(inputs=[documents_state])
+        def render_document_library(documents: list[dict[str, Any]] | None):
+            current_documents = documents or []
+            if not current_documents:
+                gr.HTML(
+                    '<div class="document-empty">No documents yet.<br>'
+                    "Upload a PDF, DOCX, TXT, MD, or JSON file.</div>"
+                )
+                return
+
+            for document in current_documents:
+                document_id = safe_text(document.get("id"))
+                if not document_id:
+                    continue
+                status_key = document_status(document)
+                retryable = bool(document.get("retryable"))
+
+                with gr.Column(
+                    key=f"document-{document_id}",
+                    elem_classes=["document-inline-card"],
+                ):
+                    gr.HTML(render_document_card_info(document))
+                    with gr.Row(elem_classes=["document-inline-actions"]):
+                        view_button = gr.Button(
+                            "View",
+                            size="sm",
+                            scale=0,
+                            min_width=42,
+                            key=f"view-{document_id}",
+                            elem_classes=["document-text-action"],
+                        )
+                        if status_key in {"failed", "error"} and retryable:
+                            retry_button = gr.Button(
+                                "↻",
+                                size="sm",
+                                scale=0,
+                                min_width=28,
+                                key=f"retry-{document_id}",
+                                elem_classes=["document-retry-action"],
+                            )
+                        else:
+                            retry_button = None
+                        delete_button = gr.Button(
+                            "Delete",
+                            size="sm",
+                            scale=0,
+                            min_width=46,
+                            key=f"delete-{document_id}",
+                            elem_classes=["document-text-action", "document-delete-action"],
+                        )
+
+                def open_inline(state, doc_id=document_id):
+                    return prepare_document_open(state, doc_id)
+
+                open_event = view_button.click(
+                    open_inline,
+                    inputs=[auth_state],
+                    outputs=[document_open_file, toast_box],
+                    show_progress="minimal",
+                )
+                open_event.then(
+                    fn=None,
+                    inputs=[document_open_file],
+                    outputs=[],
+                    js="""(raw) => {
+                        if (!raw) return;
+                        const file = JSON.parse(raw);
+                        const bytes = Uint8Array.from(atob(file.data), c => c.charCodeAt(0));
+                        const lowerName = (file.name || '').toLowerCase();
+                        let mime = file.mime || 'application/octet-stream';
+                        if (lowerName.endsWith('.pdf')) mime = 'application/pdf';
+                        else if (lowerName.endsWith('.txt') || lowerName.endsWith('.md')) mime = 'text/plain';
+                        else if (lowerName.endsWith('.json')) mime = 'application/json';
+                        const blob = new Blob([bytes], {type: mime});
+                        const url = URL.createObjectURL(blob);
+                        const opened = window.open(url, '_blank', 'noopener,noreferrer');
+                        if (!opened) window.location.href = url;
+                        setTimeout(() => URL.revokeObjectURL(url), 60000);
+                    }""",
+                )
+
+                if retry_button is not None:
+
+                    def retry_inline(state, selected, doc_id=document_id):
+                        yield from reprocess_document(state, doc_id, selected)
+
+                    retry_button.click(
+                        retry_inline,
+                        inputs=[auth_state, selected_documents],
+                        outputs=[
+                            selected_documents,
+                            manage_document,
+                            documents_state,
+                            document_catalog,
+                            empty_panel,
+                            selection_chips,
+                            toast_box,
+                        ],
+                        show_progress="hidden",
+                    )
+
+                def delete_inline(state, selected, doc_id=document_id):
+                    return delete_document(state, doc_id, selected)
+
+                confirm_text = json.dumps(
+                    f"Delete {safe_text(document.get('filename')) or 'this document'}? "
+                    "This cannot be undone."
+                )
+                delete_button.click(
+                    delete_inline,
+                    inputs=[auth_state, selected_documents],
+                    outputs=[
+                        selected_documents,
+                        manage_document,
+                        documents_state,
+                        document_catalog,
+                        empty_panel,
+                        selection_chips,
+                        toast_box,
+                    ],
+                    js=f"""(state, selected) => {{
+                        if (!window.confirm({confirm_text})) {{
+                            return [{{...(state || {{}}), __cancel_delete: true}}, selected];
+                        }}
+                        return [state, selected];
+                    }}""",
+                    show_progress="minimal",
+                )
+
     auth_mode.change(
         auth_mode_changed,
         inputs=[auth_mode],
@@ -3480,7 +3614,7 @@ with gr.Blocks(
             conversation_list,
             selected_documents,
             manage_document,
-            document_cards,
+            documents_state,
             document_catalog,
             empty_panel,
             selection_chips,
@@ -3502,7 +3636,7 @@ with gr.Blocks(
             conversation_list,
             selected_documents,
             manage_document,
-            document_cards,
+            documents_state,
             document_catalog,
             empty_panel,
             selection_chips,
@@ -3516,7 +3650,7 @@ with gr.Blocks(
         outputs=[
             selected_documents,
             manage_document,
-            document_cards,
+            documents_state,
             document_catalog,
             empty_panel,
             selection_chips,
@@ -3532,50 +3666,13 @@ with gr.Blocks(
         outputs=[
             selected_documents,
             manage_document,
-            document_cards,
+            documents_state,
             document_catalog,
             empty_panel,
             selection_chips,
             toast_box,
         ],
         show_progress="hidden",
-    )
-
-    delete_document_button.click(
-        delete_document,
-        inputs=[auth_state, manage_document, selected_documents],
-        outputs=[
-            selected_documents,
-            manage_document,
-            document_cards,
-            document_catalog,
-            empty_panel,
-            selection_chips,
-            toast_box,
-        ],
-        show_progress="minimal",
-    )
-
-    reprocess_document_button.click(
-        reprocess_document,
-        inputs=[auth_state, manage_document, selected_documents],
-        outputs=[
-            selected_documents,
-            manage_document,
-            document_cards,
-            document_catalog,
-            empty_panel,
-            selection_chips,
-            toast_box,
-        ],
-        show_progress="hidden",
-    )
-
-    view_document_button.click(
-        view_document,
-        inputs=[auth_state, manage_document],
-        outputs=[document_preview, toast_box],
-        show_progress="minimal",
     )
 
     attach_button.upload(
@@ -3584,7 +3681,7 @@ with gr.Blocks(
         outputs=[
             selected_documents,
             manage_document,
-            document_cards,
+            documents_state,
             document_catalog,
             empty_panel,
             selection_chips,
@@ -3746,12 +3843,39 @@ with gr.Blocks(
     )
 
 
+    # Keep the original prompt-pill UI and make those pills fill the existing composer
+    demo.load(
+        fn=None,
+        inputs=[],
+        outputs=[],
+        js="""() => {
+            if (window.__ragPromptPillsBound) return;
+            window.__ragPromptPillsBound = true;
+            document.addEventListener('click', (event) => {
+                const pill = event.target.closest('.prompt-pill[data-prompt]');
+                if (!pill) return;
+                const textarea = document.querySelector('#question-input textarea');
+                if (!textarea) return;
+                const value = pill.dataset.prompt || pill.textContent || '';
+                const setter = Object.getOwnPropertyDescriptor(
+                    HTMLTextAreaElement.prototype,
+                    'value'
+                ).set;
+                setter.call(textarea, value.trim());
+                textarea.dispatchEvent(new Event('input', {bubbles: true}));
+                textarea.dispatchEvent(new Event('change', {bubbles: true}));
+                textarea.focus();
+            });
+        }""",
+    )
+
+
 if __name__ == "__main__":
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     demo.queue(default_concurrency_limit=8).launch(
-        server_name="127.0.0.1",
+        server_name="0.0.0.0",
         server_port=7860,
         show_error=False,
         inbrowser=False,

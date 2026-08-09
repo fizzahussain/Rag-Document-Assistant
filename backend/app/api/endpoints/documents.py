@@ -1,9 +1,10 @@
 import json
+import mimetypes
 import uuid
 from pathlib import Path
 
 import anyio
-from fastapi import APIRouter, Depends, File, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,11 +20,12 @@ from backend.app.core.exceptions import (
     UnsupportedFileTypeError,
     ValidationError,
 )
+from backend.app.core.logging import logger
 from backend.app.core.security import (
     get_current_user_id,
     validate_file_extension,
 )
-from backend.app.database import get_db
+from backend.app.database import AsyncSessionLocal, get_db
 from backend.app.models.document import Document, DocumentChunk
 from backend.app.models.user import User
 from backend.app.schemas.common import ErrorResponse
@@ -37,6 +39,24 @@ from backend.app.schemas.document import (
 from backend.app.services.extractor import ExtractorFactory
 from backend.app.services.ingestion import IngestionService
 from backend.app.services.storage import StorageService
+
+
+
+async def process_document_background(
+    document_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> None:
+    """Process a document with a fresh database session"""
+
+    async with AsyncSessionLocal() as session:
+        ingestion = IngestionService(session, StorageService())
+        try:
+            await ingestion.process_document(document_id, user_id)
+        except Exception:
+            logger.exception(
+                "Background document processing failed",
+                document_id=str(document_id),
+            )
 
 router = APIRouter(
     prefix="/documents",
@@ -215,6 +235,7 @@ async def safely_delete_stored_file(
     },
 )
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(
         ...,
         description="Document to upload and index",
@@ -353,15 +374,16 @@ async def upload_document(
             message="The document record could not be created",
         ) from exc
 
-    ingestion = IngestionService(
-        db,
-        storage,
-    )
+    document.status = "queued"
+    await db.commit()
+    await db.refresh(document)
 
-    return await ingestion.process_document(
+    background_tasks.add_task(
+        process_document_background,
         document.id,
         current_user_id,
     )
+    return document
 
 
 @router.get(
@@ -474,12 +496,28 @@ async def get_document_content(
         document_id=document_id,
         user_id=current_user_id,
     )
-    file_bytes = await StorageService().read_file(document.storage_path)
+    try:
+        file_bytes = await StorageService().read_file(document.storage_path)
+    except Exception as exc:
+        raise StorageError(
+            message=(
+                "The original file is unavailable. Delete this entry and upload the file again."
+            ),
+        ) from exc
+
     safe_filename = document.filename.replace('"', "")
+    guessed_type = mimetypes.guess_type(safe_filename)[0]
+    stored_type = (document.mime_type or "").split(";", 1)[0].strip().lower()
+    media_type = stored_type
+    if not media_type or media_type == "application/octet-stream":
+        media_type = guessed_type or "application/octet-stream"
     return Response(
         content=file_bytes,
-        media_type=document.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{safe_filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -579,6 +617,7 @@ async def get_document_chunks(
 )
 async def reprocess_document(
     document_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     current_user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentResponse:
@@ -609,16 +648,19 @@ async def reprocess_document(
             },
         )
 
-    storage = StorageService()
-    ingestion = IngestionService(
-        db,
-        storage,
-    )
+    document.status = "queued"
+    document.failure_code = None
+    document.failure_message = None
+    document.retryable = False
+    await db.commit()
+    await db.refresh(document)
 
-    return await ingestion.process_document(
+    background_tasks.add_task(
+        process_document_background,
         document_id,
         current_user_id,
     )
+    return document
 
 
 @router.delete(

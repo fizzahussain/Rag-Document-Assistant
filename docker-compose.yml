@@ -10,7 +10,11 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-rag_db}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-rag_db}",
+        ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -21,19 +25,39 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       APP_ENV: development
+
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password}@postgres:5432/${POSTGRES_DB:-rag_db}
+
       AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?Set AUTH_SECRET_KEY in .env}
+
       UPLOAD_DIR: /app/data/uploads
+
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
+
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       LLM_MODEL: ${LLM_MODEL:-llama3.2}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+
+      CHUNK_CONTEXT_SUMMARY_ENABLED: ${CHUNK_CONTEXT_SUMMARY_ENABLED:-true}
+      CHUNK_CONTEXT_LLM_STRIDE: ${CHUNK_CONTEXT_LLM_STRIDE:-12}
+
+      OCR_ENABLED: ${OCR_ENABLED:-true}
+      OCR_LANGUAGE: ${OCR_LANGUAGE:-eng}
+      OCR_DPI: ${OCR_DPI:-200}
+
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+
+      HF_HOME: /app/.cache/huggingface
+      XDG_CACHE_HOME: /app/.cache
+
     volumes:
       - uploads:/app/data/uploads
+      - hf_cache:/app/.cache/huggingface
+
     ports:
       - "8000:8000"
+
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,6 +68,7 @@ services:
       dockerfile: frontend/Dockerfile
     environment:
       BACKEND_URL: http://backend:8000/api/v1
+      FRONTEND_HOST: 0.0.0.0
     ports:
       - "7860:7860"
     depends_on:
@@ -53,3 +78,4 @@ services:
 volumes:
   postgres_data:
   uploads:
+  hf_cache:

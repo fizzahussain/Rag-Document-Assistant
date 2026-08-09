@@ -1,5 +1,7 @@
 import io
 import json
+import shutil
+import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -44,6 +46,37 @@ class PDFExtractor(BaseExtractor):
     def _clean_char_count(text: str) -> int:
         return len("".join(text.split()))
 
+    @staticmethod
+    def _tesseract_cli_ocr(page: fitz.Page) -> str:
+        tesseract = shutil.which("tesseract")
+        if not tesseract:
+            return ""
+
+        scale = settings.OCR_DPI / 72
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        png_bytes = pixmap.tobytes("png")
+        try:
+            result = subprocess.run(
+                [
+                    tesseract,
+                    "stdin",
+                    "stdout",
+                    "-l",
+                    settings.OCR_LANGUAGE,
+                    "--dpi",
+                    str(settings.OCR_DPI),
+                ],
+                input=png_bytes,
+                capture_output=True,
+                check=False,
+                timeout=90,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        if result.returncode != 0:
+            return ""
+        return result.stdout.decode("utf-8", errors="replace").strip()
+
     def _extract_page_text(self, page: fitz.Page, page_number: int) -> tuple[str, str]:
         native_text = page.get_text("text").strip()
         if self._clean_char_count(native_text) >= settings.OCR_MIN_TEXT_CHARS:
@@ -52,6 +85,7 @@ class PDFExtractor(BaseExtractor):
         if not settings.OCR_ENABLED:
             return native_text, "native"
 
+        ocr_text = ""
         try:
             text_page = page.get_textpage_ocr(
                 language=settings.OCR_LANGUAGE,
@@ -59,18 +93,23 @@ class PDFExtractor(BaseExtractor):
                 full=True,
             )
             ocr_text = page.get_text("text", textpage=text_page).strip()
-        except Exception as exc:
-            if native_text:
-                return native_text, "native"
-            raise OCRRequiredError(
-                f"Page {page_number} requires OCR, but local Tesseract OCR is unavailable "
-                "or failed. Install Tesseract and ensure its language data is accessible."
-            ) from exc
+        except Exception:
+            ocr_text = ""
+
+        if self._clean_char_count(ocr_text) < settings.OCR_MIN_TEXT_CHARS:
+            cli_text = self._tesseract_cli_ocr(page)
+            if self._clean_char_count(cli_text) > self._clean_char_count(ocr_text):
+                ocr_text = cli_text
 
         if self._clean_char_count(ocr_text) > self._clean_char_count(native_text):
             return ocr_text, "ocr"
+        if native_text:
+            return native_text, "native"
 
-        return native_text, "native"
+        raise OCRRequiredError(
+            f"Page {page_number} requires OCR, but Tesseract produced no readable text. "
+            "Verify that Tesseract and the configured language data are available."
+        )
 
     def extract(self, file_bytes: bytes, filename: str) -> ExtractedDocument:
         document = None

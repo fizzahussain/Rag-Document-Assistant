@@ -30,7 +30,9 @@ class TextChunker:
         context_summary_max_chars: int | None = None,
     ) -> None:
         self.chunk_size = chunk_size or settings.CHUNK_SIZE
-        self.chunk_overlap = settings.CHUNK_OVERLAP if chunk_overlap is None else chunk_overlap
+        self.chunk_overlap = (
+            settings.CHUNK_OVERLAP if chunk_overlap is None else chunk_overlap
+        )
         self.context_summary_enabled = (
             settings.CHUNK_CONTEXT_SUMMARY_ENABLED
             if context_summary_enabled is None
@@ -103,7 +105,8 @@ class TextChunker:
             return chunk.text
 
         return (
-            f"Previous document context:\n{chunk.context_summary}\n\nCurrent chunk:\n{chunk.text}"
+            f"Previous document context:\n{chunk.context_summary}\n\n"
+            f"Current chunk:\n{chunk.text}"
         )
 
     def _split_text(self, text: str) -> list[str]:
@@ -161,28 +164,99 @@ class TextChunker:
         return max(candidates) if candidates else None
 
     def _update_rolling_summary(self, previous: str, current: str) -> str:
-        """Compress prior context into a bounded extractive rolling summary"""
+        """Build a bounded recursive summary from prior context and the new chunk"""
 
+        previous = previous.strip()
+        current = current.strip()
         combined = " ".join(part for part in (previous, current) if part).strip()
         if len(combined) <= self.context_summary_max_chars:
             return combined
 
-        sentences = [
-            item.strip() for item in re.split(r"(?<=[.!?])\s+|\n+", combined) if item.strip()
+        raw_units = [
+            item.strip(" \t\n•▪-")
+            for item in re.split(r"(?<=[.!?])\s+|\n+|(?=▪|•)", combined)
+            if item.strip(" \t\n•▪-")
         ]
-        if not sentences:
-            return combined[-self.context_summary_max_chars :].strip()
+        if not raw_units:
+            return combined[: self.context_summary_max_chars].rstrip()
 
-        selected: list[str] = []
-        for sentence in [*sentences[:2], *sentences[-5:]]:
-            if sentence not in selected:
-                selected.append(sentence)
+        deduplicated: list[str] = []
+        seen: set[str] = set()
+        for unit in raw_units:
+            normalized = re.sub(r"\s+", " ", unit).strip()
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduplicated.append(normalized)
 
-        summary = " ".join(selected)
-        if len(summary) > self.context_summary_max_chars:
-            summary = summary[-self.context_summary_max_chars :]
-            first_space = summary.find(" ")
-            if first_space > 0:
-                summary = summary[first_space + 1 :]
+        stopwords = {
+            "a",
+            "an",
+            "and",
+            "are",
+            "as",
+            "at",
+            "be",
+            "by",
+            "for",
+            "from",
+            "in",
+            "is",
+            "it",
+            "of",
+            "on",
+            "or",
+            "that",
+            "the",
+            "this",
+            "to",
+            "was",
+            "we",
+            "with",
+        }
 
-        return summary.strip()
+        previous_boundary = len(previous)
+        scored: list[tuple[float, int, str]] = []
+        cursor = 0
+        formula_symbols = ("=", "->", "|", "*", "\u03b3", "\u03c0")
+
+        for index, unit in enumerate(deduplicated):
+            words = re.findall(r"[A-Za-z0-9_']+", unit.casefold())
+            informative = {
+                word for word in words if word not in stopwords and len(word) > 2
+            }
+            score = min(len(informative), 12) * 0.35
+            score += 1.0 if 35 <= len(unit) <= 220 else 0.25
+            score += 0.8 if any(char.isdigit() for char in unit) else 0.0
+            score += (
+                0.6 if any(symbol in unit for symbol in formula_symbols) else 0.0
+            )
+
+            location = combined.find(unit, cursor)
+            if location >= 0:
+                cursor = location + len(unit)
+            else:
+                location = cursor
+            if location >= previous_boundary:
+                score += 1.5
+
+            scored.append((score, index, unit))
+
+        selected: list[tuple[int, str]] = []
+        used_chars = 0
+        for _, index, unit in sorted(scored, key=lambda item: (-item[0], item[1])):
+            extra = len(unit) + (1 if selected else 0)
+            if used_chars + extra > self.context_summary_max_chars:
+                continue
+            selected.append((index, unit))
+            used_chars += extra
+
+        if not selected:
+            shortened = combined[: self.context_summary_max_chars].rstrip()
+            last_space = shortened.rfind(" ")
+            return shortened[:last_space].rstrip() if last_space > 0 else shortened
+
+        selected.sort(key=lambda item: item[0])
+        summary = " ".join(unit for _, unit in selected).strip()
+        return summary[: self.context_summary_max_chars].rstrip()

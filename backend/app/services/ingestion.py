@@ -1,8 +1,11 @@
+import hashlib
 import uuid
 
+import anyio
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.config import settings
 from backend.app.core.exceptions import ExtractionError, NotFoundError, OCRRequiredError
 from backend.app.core.logging import logger
 from backend.app.models.audit import AuditLog
@@ -10,6 +13,7 @@ from backend.app.models.document import Document, DocumentChunk
 from backend.app.services.chunker import TextChunker
 from backend.app.services.embedder import EmbeddingProviderFactory
 from backend.app.services.extractor import ExtractorFactory
+from backend.app.services.llm import LLMProviderFactory
 from backend.app.services.storage import StorageService
 
 
@@ -23,6 +27,7 @@ class IngestionService:
         self.storage = storage_service or StorageService()
         self.chunker = TextChunker()
         self.embedder = EmbeddingProviderFactory.get_provider()
+        self.llm = LLMProviderFactory.get_provider()
 
     async def _audit(
         self,
@@ -51,10 +56,18 @@ class IngestionService:
         await self.db.rollback()
         document.status = "failed"
         document.failure_code = code
-        document.failure_message = message[:4000]
+        document.failure_message = message[:1000]
         document.retryable = retryable
         await self.db.commit()
-        await self._audit(document.id, "ingest", "failed", message)
+        await self._audit(document.id, "ingest", "failed", message[:1000])
+
+    @staticmethod
+    def _stored_chunk_hash(document_id: uuid.UUID, payload) -> str:
+        raw = (
+            f"{document_id}:{payload.chunk_index}:{payload.page_number}:"
+            f"{payload.chunk_hash}"
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def process_document(
         self,
@@ -78,7 +91,9 @@ class IngestionService:
             await self.db.commit()
 
             file_bytes = await self.storage.read_file(document.storage_path)
-            extracted = ExtractorFactory.get_extractor(document.filename).extract(
+            extractor = ExtractorFactory.get_extractor(document.filename)
+            extracted = await anyio.to_thread.run_sync(
+                extractor.extract,
                 file_bytes,
                 document.filename,
             )
@@ -87,9 +102,38 @@ class IngestionService:
             document.extraction_metadata = extracted.metadata
             await self.db.commit()
 
-            chunks = self.chunker.chunk_document(extracted)
+            chunks = await anyio.to_thread.run_sync(
+                self.chunker.chunk_document,
+                extracted,
+            )
             if not chunks:
                 raise ExtractionError("No searchable chunks could be created from the document")
+
+            if self.chunker.context_summary_enabled:
+                semantic_summary = ""
+                rolling_summary = ""
+                pending_chunks: list[str] = []
+                stride = max(32, settings.CHUNK_CONTEXT_LLM_STRIDE)
+
+                for chunk in chunks:
+                    chunk.context_summary = rolling_summary or None
+                    rolling_summary = self.chunker._update_rolling_summary(
+                        rolling_summary,
+                        chunk.text,
+                    )
+                    pending_chunks.append(chunk.text)
+
+                    if len(pending_chunks) >= stride:
+                        semantic_summary = await self.llm.summarize_context(
+                            semantic_summary,
+                            "\n\n".join(pending_chunks),
+                            self.chunker.context_summary_max_chars,
+                        )
+                        rolling_summary = semantic_summary or rolling_summary
+                        pending_chunks.clear()
+
+            document.status = "embedding"
+            await self.db.commit()
 
             embedding_inputs = [self.chunker.embedding_text(item) for item in chunks]
             vectors = await self.embedder.embed_texts(embedding_inputs)
@@ -104,9 +148,10 @@ class IngestionService:
 
             db_chunks: list[DocumentChunk] = []
             for payload, vector in zip(chunks, vectors, strict=True):
+                stored_hash = self._stored_chunk_hash(document.id, payload)
                 stable_chunk_id = uuid.uuid5(
                     uuid.NAMESPACE_URL,
-                    f"{document.id}:{payload.chunk_index}:{payload.chunk_hash}",
+                    f"{document.id}:{payload.chunk_index}:{stored_hash}",
                 )
                 db_chunks.append(
                     DocumentChunk(
@@ -116,7 +161,7 @@ class IngestionService:
                         page_number=payload.page_number,
                         text_content=payload.text,
                         context_summary=payload.context_summary,
-                        chunk_hash=payload.chunk_hash,
+                        chunk_hash=stored_hash,
                         embedding=vector,
                     )
                 )
@@ -140,15 +185,19 @@ class IngestionService:
             )
             raise
         except Exception as exc:
-            message = str(exc) or exc.__class__.__name__
+            safe_message = "The document could not be indexed. Retry the document."
             await self._mark_failed(
                 document,
                 code="processing_failed",
-                message=message,
+                message=safe_message,
                 retryable=True,
             )
-            logger.exception("Document ingestion failed", document_id=str(document.id))
-            raise ExtractionError("Document ingestion failed") from exc
+            logger.exception(
+                "Document ingestion failed",
+                document_id=str(document.id),
+                error_type=exc.__class__.__name__,
+            )
+            raise ExtractionError(safe_message) from exc
 
     async def delete_document(self, document_id: uuid.UUID, user_id: uuid.UUID) -> None:
         result = await self.db.execute(
@@ -161,7 +210,6 @@ class IngestionService:
         if document is None:
             raise NotFoundError("Document not found")
 
-        previous_status = document.status if document.status != "deleting" else "failed"
         document.status = "deleting"
         document.failure_code = None
         document.failure_message = None
@@ -170,23 +218,19 @@ class IngestionService:
 
         try:
             await self.storage.delete_file(document.storage_path)
+        except Exception as exc:
+            logger.warning(
+                "Stored file could not be deleted; removing database record",
+                document_id=str(document_id),
+                storage_path=document.storage_path,
+                error_type=exc.__class__.__name__,
+            )
+
+        try:
             await self.db.delete(document)
             await self.db.commit()
             await self._audit(None, "delete", "success")
-        except Exception as exc:
+        except Exception:
             await self.db.rollback()
-            result = await self.db.execute(
-                select(Document).where(
-                    Document.id == document_id,
-                    Document.user_id == user_id,
-                )
-            )
-            existing = result.scalar_one_or_none()
-            if existing is not None:
-                existing.status = previous_status
-                existing.failure_code = "delete_failed"
-                existing.failure_message = str(exc)[:4000]
-                existing.retryable = True
-                await self.db.commit()
             logger.exception("Document deletion failed", document_id=str(document_id))
             raise
