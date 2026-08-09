@@ -1750,7 +1750,64 @@ body,
 .document-retry-action button:hover {
     background: rgba(247, 200, 211, .72) !important;
 }
+/* In-app document preview */
 
+#document-preview-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 10000 !important;
+    display: none;
+    flex-direction: column;
+    width: 100vw !important;
+    height: 100vh !important;
+    background: var(--surface-raised);
+}
+
+#document-preview-overlay.preview-open {
+    display: flex !important;
+}
+
+.document-preview-header {
+    display: flex;
+    flex: 0 0 58px;
+    gap: 14px;
+    align-items: center;
+    padding: 8px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+}
+
+#document-preview-close {
+    min-width: 120px;
+    padding: 8px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    background: var(--surface-raised);
+    color: var(--text);
+    cursor: pointer;
+    font-weight: 700;
+}
+
+#document-preview-close:hover {
+    background: var(--surface-hover);
+}
+
+#document-preview-name {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text);
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#document-preview-frame {
+    flex: 1 1 0;
+    width: 100%;
+    min-height: 0;
+    border: 0;
+    background: #ffffff;
+}
 """
 
 
@@ -3456,7 +3513,23 @@ with gr.Blocks(
                     )
 
     document_open_file = gr.Textbox(visible=False, elem_id="document-open-file")
+    gr.HTML(
+        """
+        <div id="document-preview-overlay">
+            <div class="document-preview-header">
+                <button id="document-preview-close" type="button">
+                    ← Back to chat
+                </button>
+                <div id="document-preview-name">Document preview</div>
+            </div>
 
+            <iframe
+                id="document-preview-frame"
+                title="Document preview"
+            ></iframe>
+        </div>
+        """
+    )
     with document_list_container:
 
         @gr.render(inputs=[documents_state])
@@ -3525,18 +3598,71 @@ with gr.Blocks(
                     outputs=[],
                     js="""(raw) => {
                         if (!raw) return;
+
                         const file = JSON.parse(raw);
-                        const bytes = Uint8Array.from(atob(file.data), c => c.charCodeAt(0));
+                        const bytes = Uint8Array.from(
+                            atob(file.data),
+                            character => character.charCodeAt(0)
+                        );
+
                         const lowerName = (file.name || '').toLowerCase();
                         let mime = file.mime || 'application/octet-stream';
-                        if (lowerName.endsWith('.pdf')) mime = 'application/pdf';
-                        else if (lowerName.endsWith('.txt') || lowerName.endsWith('.md')) mime = 'text/plain';
-                        else if (lowerName.endsWith('.json')) mime = 'application/json';
+
+                        if (lowerName.endsWith('.pdf')) {
+                            mime = 'application/pdf';
+                        } else if (
+                            lowerName.endsWith('.txt') ||
+                            lowerName.endsWith('.md')
+                        ) {
+                            mime = 'text/plain';
+                        } else if (lowerName.endsWith('.json')) {
+                            mime = 'application/json';
+                        }
+
                         const blob = new Blob([bytes], {type: mime});
                         const url = URL.createObjectURL(blob);
-                        const opened = window.open(url, '_blank', 'noopener,noreferrer');
-                        if (!opened) window.location.href = url;
-                        setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+                        const overlay = document.getElementById(
+                            'document-preview-overlay'
+                        );
+                        const frame = document.getElementById(
+                            'document-preview-frame'
+                        );
+                        const name = document.getElementById(
+                            'document-preview-name'
+                        );
+                        const close = document.getElementById(
+                            'document-preview-close'
+                        );
+
+                        if (!overlay || !frame || !close) {
+                            URL.revokeObjectURL(url);
+                            return;
+                        }
+
+                        if (window.__ragPreviewUrl) {
+                            URL.revokeObjectURL(window.__ragPreviewUrl);
+                        }
+
+                        window.__ragPreviewUrl = url;
+
+                        frame.src = url;
+
+                        if (name) {
+                            name.textContent = file.name || 'Document preview';
+                        }
+
+                        overlay.classList.add('preview-open');
+
+                        close.onclick = () => {
+                            overlay.classList.remove('preview-open');
+                            frame.src = 'about:blank';
+
+                            if (window.__ragPreviewUrl) {
+                                URL.revokeObjectURL(window.__ragPreviewUrl);
+                                window.__ragPreviewUrl = null;
+                            }
+                        };
                     }""",
                 )
 
