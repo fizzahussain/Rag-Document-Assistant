@@ -23,6 +23,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+
     environment:
       APP_ENV: development
 
@@ -48,7 +49,18 @@ services:
 
       OLLAMA_BASE_URL: http://host.docker.internal:11434
 
+      TRANSCRIPTION_PROVIDER: ${TRANSCRIPTION_PROVIDER:-faster-whisper}
+      TRANSCRIPTION_MODEL: ${TRANSCRIPTION_MODEL:-small}
+      TRANSCRIPTION_DEVICE: ${TRANSCRIPTION_DEVICE:-cpu}
+      TRANSCRIPTION_COMPUTE_TYPE: ${TRANSCRIPTION_COMPUTE_TYPE:-int8}
+      TRANSCRIPTION_LANGUAGE: ${TRANSCRIPTION_LANGUAGE:-}
+      TRANSCRIPTION_BEAM_SIZE: ${TRANSCRIPTION_BEAM_SIZE:-5}
+      TRANSCRIPTION_TIMEOUT_SECONDS: ${TRANSCRIPTION_TIMEOUT_SECONDS:-180}
+      MAX_AUDIO_SIZE_MB: ${MAX_AUDIO_SIZE_MB:-25}
+      ALLOWED_AUDIO_EXTENSIONS: ${ALLOWED_AUDIO_EXTENSIONS:-wav,mp3,m4a,ogg,webm,flac}
+
       HF_HOME: /app/.cache/huggingface
+      HUGGINGFACE_HUB_CACHE: /app/.cache/huggingface/hub
       XDG_CACHE_HOME: /app/.cache
 
     volumes:
@@ -66,11 +78,14 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+
     environment:
       BACKEND_URL: http://backend:8000/api/v1
       FRONTEND_HOST: 0.0.0.0
+
     ports:
       - "7860:7860"
+
     depends_on:
       backend:
         condition: service_healthy
