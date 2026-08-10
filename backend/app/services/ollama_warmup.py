@@ -1,6 +1,6 @@
 import httpx
 
-from backend.app.config import settings
+from backend.app.config import ollama_keep_alive, settings
 from backend.app.core.logging import logger
 from backend.app.services.embedder import EmbeddingProviderFactory
 from backend.app.services.http_client import get_http_client
@@ -19,7 +19,6 @@ async def warm_ollama_models() -> None:
     if not uses_ollama:
         return
 
-    keep_alive = settings.OLLAMA_KEEP_ALIVE
     timeout = httpx.Timeout(settings.OLLAMA_TIMEOUT_SECONDS, connect=10.0)
     base_url = settings.OLLAMA_BASE_URL.rstrip("/")
 
@@ -41,7 +40,7 @@ async def warm_ollama_models() -> None:
             "messages": [{"role": "user", "content": "warmup"}],
             "stream": False,
             "think": False,
-            "keep_alive": keep_alive,
+            "keep_alive": ollama_keep_alive(),
             "options": {"num_predict": 1},
         }
         try:

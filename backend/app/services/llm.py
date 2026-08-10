@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel
 
-from backend.app.config import settings
+from backend.app.config import ollama_keep_alive, settings
 from backend.app.core.exceptions import RAGException
 from backend.app.services.http_client import get_http_client
 from backend.app.services.retrieval import RetrievedSource
@@ -348,7 +348,7 @@ class OllamaLLMProvider(BaseLLMProvider):
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
             "think": False,
-            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+            "keep_alive": ollama_keep_alive(),
             "options": {"temperature": 0.0, "num_predict": 180},
         }
         try:
@@ -400,7 +400,7 @@ class OllamaLLMProvider(BaseLLMProvider):
             "messages": messages,
             "stream": False,
             "think": False,
-            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+            "keep_alive": ollama_keep_alive(),
             "options": {
                 "temperature": 0.1,
                 # Smaller prompts (trimmed summaries) allow a tighter context window.

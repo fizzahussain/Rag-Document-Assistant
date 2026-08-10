@@ -159,6 +159,16 @@ class Settings(BaseSettings):
 
         return value.strip().rstrip("/")
 
+    @field_validator("OLLAMA_KEEP_ALIVE")
+    @classmethod
+    def clean_ollama_keep_alive(cls, value: str) -> str:
+        """Normalize keep_alive (duration string like 24h, or -1 for forever)"""
+
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("OLLAMA_KEEP_ALIVE must not be empty")
+        return cleaned
+
     @field_validator(
         "ALLOWED_EXTENSIONS",
         "ALLOWED_AUDIO_EXTENSIONS",
@@ -278,3 +288,18 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+
+def ollama_keep_alive() -> int | str:
+    """Return keep_alive in the type Ollama accepts.
+
+    Numeric values like -1/0 must be JSON numbers. As a string, Ollama parses
+    them as Go durations and rejects '-1' with 'missing unit in duration'.
+    Duration strings like '24h' or '5m' stay strings.
+    """
+
+    value = settings.OLLAMA_KEEP_ALIVE.strip()
+    try:
+        return int(value)
+    except ValueError:
+        return value

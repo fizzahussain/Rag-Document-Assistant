@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 import httpx
 
-from backend.app.config import settings
+from backend.app.config import ollama_keep_alive, settings
 from backend.app.core.exceptions import RAGException
 from backend.app.services.http_client import get_http_client
 
@@ -149,7 +149,7 @@ class OllamaEmbeddingProvider(BaseEmbeddingProvider):
         payload = {
             "model": self.model,
             "input": texts,
-            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+            "keep_alive": ollama_keep_alive(),
         }
 
         try:
