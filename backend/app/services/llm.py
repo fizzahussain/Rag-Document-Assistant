@@ -1,6 +1,8 @@
+import json
 import re
 import time
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -65,6 +67,18 @@ class BaseLLMProvider(ABC):
     ) -> RAGAnswer:
         """Generate an answer from retrieved sources and conversation history"""
 
+    async def stream_answer(
+        self,
+        query: str,
+        sources: list[RetrievedSource],
+        history: list[dict[str, str]] | None = None,
+    ) -> AsyncIterator[str]:
+        """Yield answer text deltas. Default: single chunk from generate_answer."""
+
+        result = await self.generate_answer(query, sources, history)
+        if result.answer:
+            yield result.answer
+
     async def rewrite_query(
         self,
         query: str,
@@ -93,6 +107,7 @@ def build_context(
     formatted_context: list[str] = []
     citations: list[Citation] = []
     summary_cap = settings.QUERY_CONTEXT_SUMMARY_MAX_CHARS
+    chunk_cap = settings.QUERY_CONTEXT_CHUNK_MAX_CHARS
 
     for source in sources:
         if source.page_number is not None:
@@ -106,9 +121,10 @@ def build_context(
             if trimmed:
                 prior_context = f"PRIOR DOCUMENT CONTEXT SUMMARY:\n{trimmed}\n"
 
+        chunk_text = _trim_summary(source.text, chunk_cap)
         formatted_context.append(
             f"SOURCE [{source.filename}, {location}]\n"
-            f"{prior_context}CURRENT CHUNK:\n{source.text}\n"
+            f"{prior_context}CURRENT CHUNK:\n{chunk_text}\n"
         )
 
         citations.append(
@@ -121,6 +137,28 @@ def build_context(
         )
 
     return "\n".join(formatted_context), citations
+
+
+def build_chat_messages(
+    query: str,
+    sources: list[RetrievedSource],
+    history: list[dict[str, str]] | None = None,
+) -> tuple[list[dict[str, str]], list[Citation]]:
+    """Assemble chat messages and citations for grounded generation"""
+
+    context, citations = build_context(sources)
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE},
+        *normalized_history(history),
+        {
+            "role": "user",
+            "content": (
+                f"DOCUMENT CONTEXT:\n{context}\n\n"
+                f"CURRENT USER QUESTION:\n{query}"
+            ),
+        },
+    ]
+    return messages, citations
 
 
 def normalized_history(history: list[dict[str, str]] | None) -> list[dict[str, str]]:
@@ -238,19 +276,15 @@ class OpenAILLMProvider(BaseLLMProvider):
                 execution_time_seconds=round(time.time() - start_time, 3),
             )
 
-        context, citations = build_context(sources)
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE},
-            *normalized_history(history),
-            {
-                "role": "user",
-                "content": (
-                    f"DOCUMENT CONTEXT:\n{context}\n\n"
-                    f"CURRENT USER QUESTION:\n{query}\n\n"
-                    "/no_think\nReturn only the final answer."
-                ),
-            },
-        ]
+        messages, citations = build_chat_messages(query, sources, history)
+        # Keep the OpenAI-specific /no_think hint on the final user turn.
+        messages[-1] = {
+            "role": "user",
+            "content": (
+                f"{messages[-1]['content']}\n\n"
+                "/no_think\nReturn only the final answer."
+            ),
+        }
 
         payload: dict[str, Any] = {
             "model": self.model,
@@ -302,33 +336,22 @@ class OllamaLLMProvider(BaseLLMProvider):
         self.endpoint = f"{base_url.rstrip('/')}/api/chat"
         self.timeout = httpx.Timeout(timeout_seconds, connect=10.0)
 
+    def _generation_options(self) -> dict[str, Any]:
+        return {
+            "temperature": 0.1,
+            "num_ctx": settings.OLLAMA_NUM_CTX,
+            "num_predict": settings.OLLAMA_NUM_PREDICT,
+        }
+
     async def rewrite_query(
         self,
         query: str,
         history: list[dict[str, str]] | None = None,
     ) -> str:
-        """Resolve follow-up references locally without another model call"""
+        """Resolve ordinal follow-ups locally; leave other queries unchanged."""
 
         resolved = _ordinal_followup(query, history)
-        if resolved:
-            return resolved
-
-        follow_up_pattern = r"\b(that|this|it|those|these|previous|above|more)\b"
-        if not history or not re.search(follow_up_pattern, query, re.I):
-            return query
-
-        cleaned = normalized_history(history)
-        previous_answer = next(
-            (item["content"] for item in reversed(cleaned) if item["role"] == "assistant"),
-            "",
-        )
-        if not previous_answer:
-            return query
-
-        compact_context = " ".join(previous_answer.split())[:700]
-        return (
-            f"{query}\nPrevious assistant answer context: {compact_context}"
-        )
+        return resolved or query
 
     async def summarize_context(
         self,
@@ -366,6 +389,69 @@ class OllamaLLMProvider(BaseLLMProvider):
             pass
         return await super().summarize_context(previous_summary, current_chunk, max_chars)
 
+    async def stream_answer(
+        self,
+        query: str,
+        sources: list[RetrievedSource],
+        history: list[dict[str, str]] | None = None,
+    ) -> AsyncIterator[str]:
+        if not sources:
+            yield INSUFFICIENT_CONTEXT_MESSAGE
+            return
+
+        messages, _citations = build_chat_messages(query, sources, history)
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+            "think": False,
+            "keep_alive": ollama_keep_alive(),
+            "options": self._generation_options(),
+        }
+
+        client = get_http_client()
+        try:
+            async with client.stream(
+                "POST",
+                self.endpoint,
+                json=payload,
+                timeout=self.timeout,
+            ) as response:
+                if response.status_code != 200:
+                    body = (await response.aread()).decode("utf-8", errors="replace")
+                    raise RAGException(
+                        f"Ollama API error ({response.status_code}): {body}"
+                    )
+
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise RAGException("Ollama returned an invalid stream chunk") from exc
+
+                    content = ""
+                    message = chunk.get("message")
+                    if isinstance(message, dict):
+                        content = str(message.get("content") or "")
+                    if content:
+                        yield content
+
+                    if chunk.get("done"):
+                        break
+        except RAGException:
+            raise
+        except httpx.ConnectError as exc:
+            raise RAGException(
+                f"Could not connect to Ollama at {settings.OLLAMA_BASE_URL}. "
+                "Make sure Ollama is running."
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise RAGException("Ollama answer generation timed out") from exc
+        except httpx.HTTPError as exc:
+            raise RAGException(f"Ollama request failed: {exc}") from exc
+
     async def generate_answer(
         self,
         query: str,
@@ -382,31 +468,14 @@ class OllamaLLMProvider(BaseLLMProvider):
                 execution_time_seconds=round(time.time() - start_time, 3),
             )
 
-        context, citations = build_context(sources)
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE},
-            *normalized_history(history),
-            {
-                "role": "user",
-                "content": (
-                    f"DOCUMENT CONTEXT:\n{context}\n\n"
-                    f"CURRENT USER QUESTION:\n{query}"
-                ),
-            },
-        ]
-
+        messages, citations = build_chat_messages(query, sources, history)
         payload = {
             "model": self.model,
             "messages": messages,
             "stream": False,
             "think": False,
             "keep_alive": ollama_keep_alive(),
-            "options": {
-                "temperature": 0.1,
-                # Smaller prompts (trimmed summaries) allow a tighter context window.
-                "num_ctx": 3072,
-                "num_predict": 320,
-            },
+            "options": self._generation_options(),
         }
 
         try:

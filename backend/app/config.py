@@ -51,8 +51,12 @@ class Settings(BaseSettings):
     # Cap summaries injected into the LLM prompt at query time (keeps answer quality,
     # shrinks tokens / Ollama prefill time). Does not change API request/response schema.
     QUERY_CONTEXT_SUMMARY_MAX_CHARS: int = 180
+    # Cap retrieved chunk text injected into the LLM prompt (wall-clock win on local models).
+    QUERY_CONTEXT_CHUNK_MAX_CHARS: int = 600
 
-    CHAT_HISTORY_MESSAGES: int = 8
+    CHAT_HISTORY_MESSAGES: int = 4
+    # Drop weak retrieval hits so the model is not fed noisy context.
+    CHAT_SCORE_THRESHOLD: float = 0.35
 
     OCR_ENABLED: bool = True
     OCR_LANGUAGE: str = "eng"
@@ -67,6 +71,8 @@ class Settings(BaseSettings):
     OLLAMA_TIMEOUT_SECONDS: float = 120.0
     OLLAMA_KEEP_ALIVE: str = "-1"
     OLLAMA_WARMUP_ON_STARTUP: bool = True
+    OLLAMA_NUM_CTX: int = 2048
+    OLLAMA_NUM_PREDICT: int = 256
 
     TRANSCRIPTION_PROVIDER: str = "faster-whisper"
     TRANSCRIPTION_MODEL: str = "small"
@@ -259,11 +265,23 @@ class Settings(BaseSettings):
         if self.QUERY_CONTEXT_SUMMARY_MAX_CHARS <= 0:
             raise ValueError("QUERY_CONTEXT_SUMMARY_MAX_CHARS must be greater than zero")
 
+        if self.QUERY_CONTEXT_CHUNK_MAX_CHARS <= 0:
+            raise ValueError("QUERY_CONTEXT_CHUNK_MAX_CHARS must be greater than zero")
+
         if self.CHUNK_CONTEXT_LLM_STRIDE <= 0:
             raise ValueError("CHUNK_CONTEXT_LLM_STRIDE must be greater than zero")
 
         if self.CHAT_HISTORY_MESSAGES < 0:
             raise ValueError("CHAT_HISTORY_MESSAGES must not be negative")
+
+        if not 0.0 <= self.CHAT_SCORE_THRESHOLD <= 1.0:
+            raise ValueError("CHAT_SCORE_THRESHOLD must be between 0.0 and 1.0")
+
+        if self.OLLAMA_NUM_CTX <= 0:
+            raise ValueError("OLLAMA_NUM_CTX must be greater than zero")
+
+        if self.OLLAMA_NUM_PREDICT <= 0:
+            raise ValueError("OLLAMA_NUM_PREDICT must be greater than zero")
 
         if self.OCR_DPI <= 0:
             raise ValueError("OCR_DPI must be greater than zero")
