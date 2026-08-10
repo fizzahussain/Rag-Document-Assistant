@@ -3,6 +3,7 @@ import httpx
 from backend.app.config import settings
 from backend.app.core.logging import logger
 from backend.app.services.embedder import EmbeddingProviderFactory
+from backend.app.services.http_client import get_http_client
 
 
 async def warm_ollama_models() -> None:
@@ -44,8 +45,12 @@ async def warm_ollama_models() -> None:
             "options": {"num_predict": 1},
         }
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(f"{base_url}/api/chat", json=payload)
+            client = get_http_client()
+            response = await client.post(
+                f"{base_url}/api/chat",
+                json=payload,
+                timeout=timeout,
+            )
             if response.status_code == 200:
                 logger.info("Ollama chat model warmed", model=settings.LLM_MODEL)
             else:

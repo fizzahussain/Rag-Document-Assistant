@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from backend.app.config import settings
 from backend.app.core.exceptions import RAGException
+from backend.app.services.http_client import get_http_client
 from backend.app.services.retrieval import RetrievedSource
 
 INSUFFICIENT_CONTEXT_MESSAGE = (
@@ -91,6 +92,7 @@ def build_context(
 
     formatted_context: list[str] = []
     citations: list[Citation] = []
+    summary_cap = settings.QUERY_CONTEXT_SUMMARY_MAX_CHARS
 
     for source in sources:
         if source.page_number is not None:
@@ -98,11 +100,12 @@ def build_context(
         else:
             location = f"chunk {source.chunk_index}"
 
-        prior_context = (
-            f"PRIOR DOCUMENT CONTEXT SUMMARY:\n{source.context_summary}\n"
-            if source.context_summary
-            else ""
-        )
+        prior_context = ""
+        if source.context_summary:
+            trimmed = _trim_summary(source.context_summary, summary_cap)
+            if trimmed:
+                prior_context = f"PRIOR DOCUMENT CONTEXT SUMMARY:\n{trimmed}\n"
+
         formatted_context.append(
             f"SOURCE [{source.filename}, {location}]\n"
             f"{prior_context}CURRENT CHUNK:\n{source.text}\n"
@@ -260,8 +263,13 @@ class OpenAILLMProvider(BaseLLMProvider):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
-                response = await client.post(self.endpoint, headers=headers, json=payload)
+            client = get_http_client()
+            response = await client.post(
+                self.endpoint,
+                headers=headers,
+                json=payload,
+                timeout=45.0,
+            )
         except httpx.HTTPError as exc:
             raise RAGException(f"OpenAI request failed: {exc}") from exc
 
@@ -344,8 +352,12 @@ class OllamaLLMProvider(BaseLLMProvider):
             "options": {"temperature": 0.0, "num_predict": 180},
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(self.endpoint, json=payload)
+            client = get_http_client()
+            response = await client.post(
+                self.endpoint,
+                json=payload,
+                timeout=self.timeout,
+            )
             if response.status_code == 200:
                 summary = response.json().get("message", {}).get("content", "").strip()
                 if summary:
@@ -391,14 +403,19 @@ class OllamaLLMProvider(BaseLLMProvider):
             "keep_alive": settings.OLLAMA_KEEP_ALIVE,
             "options": {
                 "temperature": 0.1,
-                "num_ctx": 4096,
+                # Smaller prompts (trimmed summaries) allow a tighter context window.
+                "num_ctx": 3072,
                 "num_predict": 320,
             },
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(self.endpoint, json=payload)
+            client = get_http_client()
+            response = await client.post(
+                self.endpoint,
+                json=payload,
+                timeout=self.timeout,
+            )
         except httpx.ConnectError as exc:
             raise RAGException(
                 f"Could not connect to Ollama at {settings.OLLAMA_BASE_URL}. "

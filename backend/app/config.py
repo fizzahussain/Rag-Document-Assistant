@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     CHUNK_CONTEXT_SUMMARY_ENABLED: bool = True
     CHUNK_CONTEXT_SUMMARY_MAX_CHARS: int = 700
     CHUNK_CONTEXT_LLM_STRIDE: int = 12
+    # Cap summaries injected into the LLM prompt at query time (keeps answer quality,
+    # shrinks tokens / Ollama prefill time). Does not change API request/response schema.
+    QUERY_CONTEXT_SUMMARY_MAX_CHARS: int = 180
 
     CHAT_HISTORY_MESSAGES: int = 8
 
@@ -242,6 +245,9 @@ class Settings(BaseSettings):
 
         if self.CHUNK_CONTEXT_SUMMARY_MAX_CHARS <= 0:
             raise ValueError("CHUNK_CONTEXT_SUMMARY_MAX_CHARS must be greater than zero")
+
+        if self.QUERY_CONTEXT_SUMMARY_MAX_CHARS <= 0:
+            raise ValueError("QUERY_CONTEXT_SUMMARY_MAX_CHARS must be greater than zero")
 
         if self.CHUNK_CONTEXT_LLM_STRIDE <= 0:
             raise ValueError("CHUNK_CONTEXT_LLM_STRIDE must be greater than zero")

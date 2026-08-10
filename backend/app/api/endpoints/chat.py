@@ -1,3 +1,4 @@
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, status
@@ -12,6 +13,7 @@ from backend.app.core.exceptions import (
     NotFoundError,
     ServiceUnavailableError,
 )
+from backend.app.core.logging import logger
 from backend.app.core.security import get_current_user_id
 from backend.app.database import get_db
 from backend.app.models.chat import Conversation, Message
@@ -180,6 +182,8 @@ async def chat(
 ) -> ChatResponse:
     """Generate and store a conversational grounded assistant response"""
 
+    total_started = time.perf_counter()
+    auth_started = time.perf_counter()
     user = await get_active_user(db=db, user_id=current_user_id)
 
     if request.conversation_id is not None:
@@ -194,10 +198,18 @@ async def chat(
             user_id=user.id,
             title=build_conversation_title(request.message),
         )
+    auth_db_ms = (time.perf_counter() - auth_started) * 1000
 
+    history_started = time.perf_counter()
     history = await load_conversation_history(db, conversation.id)
+    history_ms = (time.perf_counter() - history_started) * 1000
+
     intent = classify_intent(request.message)
     direct = direct_response(intent)
+
+    rewrite_ms = 0.0
+    retrieval_ms = 0.0
+    llm_ms = 0.0
 
     if direct is not None:
         rag_result = RAGAnswer(
@@ -208,13 +220,16 @@ async def chat(
         )
         sources = []
     else:
+        rewrite_started = time.perf_counter()
         try:
             provider = LLMProviderFactory.get_provider()
             retrieval_query = await provider.rewrite_query(request.message, history)
         except Exception:
             retrieval_query = contextual_retrieval_query(request.message, history)
             provider = LLMProviderFactory.get_provider()
+        rewrite_ms = (time.perf_counter() - rewrite_started) * 1000
 
+        retrieval_started = time.perf_counter()
         try:
             sources = await RetrievalService(db).search(
                 query=retrieval_query,
@@ -227,7 +242,9 @@ async def chat(
                 message="Relevant document content could not be retrieved",
                 details={"service": "retrieval"},
             ) from exc
+        retrieval_ms = (time.perf_counter() - retrieval_started) * 1000
 
+        llm_started = time.perf_counter()
         try:
             rag_result = await provider.generate_answer(
                 query=retrieval_query,
@@ -239,6 +256,7 @@ async def chat(
                 message="The language model could not generate an answer",
                 details={"service": "llm"},
             ) from exc
+        llm_ms = (time.perf_counter() - llm_started) * 1000
 
     user_message = Message(
         conversation_id=conversation.id,
@@ -253,12 +271,30 @@ async def chat(
     )
     db.add_all([user_message, assistant_message])
 
+    persist_started = time.perf_counter()
     try:
         await db.commit()
         await db.refresh(assistant_message)
     except SQLAlchemyError as exc:
         await db.rollback()
         raise DatabaseError(message="The conversation messages could not be saved") from exc
+    persist_ms = (time.perf_counter() - persist_started) * 1000
+
+    total_ms = (time.perf_counter() - total_started) * 1000
+    logger.info(
+        "chat stages",
+        intent=intent.value if hasattr(intent, "value") else str(intent),
+        direct_response=direct is not None,
+        auth_db_ms=round(auth_db_ms, 2),
+        history_ms=round(history_ms, 2),
+        rewrite_ms=round(rewrite_ms, 2),
+        retrieval_ms=round(retrieval_ms, 2),
+        llm_ms=round(llm_ms, 2),
+        persist_ms=round(persist_ms, 2),
+        total_ms=round(total_ms, 2),
+        source_count=len(sources),
+        top_k=request.top_k,
+    )
 
     return ChatResponse(
         conversation_id=conversation.id,

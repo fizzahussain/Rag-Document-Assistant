@@ -16,6 +16,7 @@ from backend.app.config import settings
 from backend.app.core.exceptions import RAGException
 from backend.app.core.logging import logger, setup_logging
 from backend.app.database import close_database
+from backend.app.services.http_client import close_http_client
 from backend.app.services.ollama_warmup import warm_ollama_models
 
 setup_logging()
@@ -55,6 +56,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         logger.info("Application shutting down")
+        await close_http_client()
         await close_database()
 
 

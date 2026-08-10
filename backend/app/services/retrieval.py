@@ -1,4 +1,5 @@
 import math
+import time
 import uuid
 
 from pydantic import BaseModel
@@ -6,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.config import settings
+from backend.app.core.logging import logger
 from backend.app.models.document import Document, DocumentChunk
 from backend.app.services.embedder import BaseEmbeddingProvider, EmbeddingProviderFactory
 
@@ -45,7 +47,10 @@ class RetrievalService:
             return []
 
         limit = min(max(limit, 1), 50)
+
+        embed_started = time.perf_counter()
         query_vector = await self.embedder.embed_query(query)
+        embed_ms = (time.perf_counter() - embed_started) * 1000
 
         filters = [
             Document.user_id == user_id,
@@ -55,30 +60,39 @@ class RetrievalService:
         if document_ids:
             filters.append(Document.id.in_(document_ids))
 
+        search_started = time.perf_counter()
         if settings.DATABASE_URL.startswith("sqlite"):
-            return await self._search_in_memory(
+            sources = await self._search_in_memory(
                 query_vector=query_vector,
                 filters=filters,
                 limit=limit,
                 score_threshold=score_threshold,
             )
+        else:
+            distance = DocumentChunk.embedding.cosine_distance(query_vector)
+            result = await self.db.execute(
+                select(DocumentChunk, Document, distance.label("distance"))
+                .join(Document, Document.id == DocumentChunk.document_id)
+                .where(*filters)
+                .order_by(distance)
+                .limit(limit)
+            )
 
-        distance = DocumentChunk.embedding.cosine_distance(query_vector)
-        result = await self.db.execute(
-            select(DocumentChunk, Document, distance.label("distance"))
-            .join(Document, Document.id == DocumentChunk.document_id)
-            .where(*filters)
-            .order_by(distance)
-            .limit(limit)
+            sources = []
+            for chunk, document, raw_distance in result.all():
+                score = max(0.0, 1.0 - float(raw_distance))
+                if score_threshold is not None and score < score_threshold:
+                    continue
+                sources.append(self._to_source(chunk, document, score))
+
+        search_ms = (time.perf_counter() - search_started) * 1000
+        logger.info(
+            "retrieval stages",
+            embed_ms=round(embed_ms, 2),
+            search_ms=round(search_ms, 2),
+            source_count=len(sources),
+            limit=limit,
         )
-
-        sources: list[RetrievedSource] = []
-        for chunk, document, raw_distance in result.all():
-            score = max(0.0, 1.0 - float(raw_distance))
-            if score_threshold is not None and score < score_threshold:
-                continue
-            sources.append(self._to_source(chunk, document, score))
-
         return sources
 
     async def _search_in_memory(

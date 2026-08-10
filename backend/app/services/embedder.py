@@ -6,6 +6,7 @@ import httpx
 
 from backend.app.config import settings
 from backend.app.core.exceptions import RAGException
+from backend.app.services.http_client import get_http_client
 
 
 class BaseEmbeddingProvider(ABC):
@@ -91,12 +92,13 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    self.endpoint,
-                    headers=headers,
-                    json=payload,
-                )
+            client = get_http_client()
+            response = await client.post(
+                self.endpoint,
+                headers=headers,
+                json=payload,
+                timeout=30.0,
+            )
         except httpx.HTTPError as exc:
             raise RAGException(f"Could not connect to OpenAI embeddings API: {exc}") from exc
 
@@ -151,11 +153,12 @@ class OllamaEmbeddingProvider(BaseEmbeddingProvider):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    self.endpoint,
-                    json=payload,
-                )
+            client = get_http_client()
+            response = await client.post(
+                self.endpoint,
+                json=payload,
+                timeout=self.timeout,
+            )
         except httpx.ConnectError as exc:
             raise RAGException(
                 "Could not connect to Ollama at "
