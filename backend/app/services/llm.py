@@ -391,8 +391,14 @@ class OllamaLLMProvider(BaseLLMProvider):
             "keep_alive": "10m",
             "options": {
                 "temperature": 0.1,
+<<<<<<< Updated upstream
                 "num_ctx": 4096,
                 "num_predict": 320,
+=======
+                # Smaller prompts (trimmed summaries) allow a tighter context window.
+                "num_ctx": 3072,
+                "num_predict": 200,
+>>>>>>> Stashed changes
             },
         }
 

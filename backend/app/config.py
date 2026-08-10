@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     CHUNK_CONTEXT_SUMMARY_MAX_CHARS: int = 700
     CHUNK_CONTEXT_LLM_STRIDE: int = 12
 
-    CHAT_HISTORY_MESSAGES: int = 8
+    CHAT_HISTORY_MESSAGES: int = 4
 
     OCR_ENABLED: bool = True
     OCR_LANGUAGE: str = "eng"
