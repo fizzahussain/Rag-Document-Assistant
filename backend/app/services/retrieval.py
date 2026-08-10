@@ -92,6 +92,7 @@ class RetrievalService:
             search_ms=round(search_ms, 2),
             source_count=len(sources),
             limit=limit,
+            scores=[round(source.score, 3) for source in sources],
         )
         return sources
 

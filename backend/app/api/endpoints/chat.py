@@ -235,6 +235,7 @@ async def chat(
                 query=retrieval_query,
                 user_id=current_user_id,
                 limit=request.top_k,
+                score_threshold=settings.CHAT_SCORE_THRESHOLD,
                 document_ids=request.document_ids,
             )
         except Exception as exc:
