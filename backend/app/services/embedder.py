@@ -147,7 +147,7 @@ class OllamaEmbeddingProvider(BaseEmbeddingProvider):
         payload = {
             "model": self.model,
             "input": texts,
-            "keep_alive": "10m",
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
         }
 
         try:

@@ -62,6 +62,8 @@ class Settings(BaseSettings):
 
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_TIMEOUT_SECONDS: float = 120.0
+    OLLAMA_KEEP_ALIVE: str = "-1"
+    OLLAMA_WARMUP_ON_STARTUP: bool = True
 
     TRANSCRIPTION_PROVIDER: str = "faster-whisper"
     TRANSCRIPTION_MODEL: str = "small"

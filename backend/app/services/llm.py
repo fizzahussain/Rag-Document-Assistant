@@ -340,7 +340,7 @@ class OllamaLLMProvider(BaseLLMProvider):
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
             "think": False,
-            "keep_alive": "10m",
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
             "options": {"temperature": 0.0, "num_predict": 180},
         }
         try:
@@ -388,7 +388,7 @@ class OllamaLLMProvider(BaseLLMProvider):
             "messages": messages,
             "stream": False,
             "think": False,
-            "keep_alive": "10m",
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
             "options": {
                 "temperature": 0.1,
                 "num_ctx": 4096,
