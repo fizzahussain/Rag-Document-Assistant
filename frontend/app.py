@@ -1811,6 +1811,349 @@ body,
 """
 
 
+CSS += r"""
+/* Targeted UI fixes: auth split layout, collapsible sidebar, viewport fit */
+#auth-shell {
+    position: relative !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    max-height: 100dvh !important;
+    padding: clamp(22px, 3vw, 44px) !important;
+    gap: clamp(18px, 2vw, 30px) !important;
+    align-items: stretch !important;
+    overflow: hidden !important;
+    background:
+        radial-gradient(circle at 12% 16%, rgba(247, 200, 211, .82), transparent 28%),
+        radial-gradient(circle at 84% 18%, rgba(169, 183, 198, .62), transparent 30%),
+        radial-gradient(circle at 74% 86%, rgba(168, 181, 138, .42), transparent 30%),
+        linear-gradient(135deg, #fff7e6 0%, #f9dce4 42%, #e5eaf0 72%, #e3ead9 100%) !important;
+}
+
+/* Never override Gradio's login/workspace visibility state */
+#auth-shell.hide,
+#auth-shell[hidden],
+#workspace.hide,
+#workspace[hidden] {
+    display: none !important;
+}
+
+#auth-form-column {
+    display: flex !important;
+    flex: 0 0 clamp(390px, 34vw, 520px) !important;
+    width: clamp(390px, 34vw, 520px) !important;
+    min-width: 390px !important;
+    max-width: 520px !important;
+    padding: clamp(34px, 4vw, 58px) !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+    border: 1px solid rgba(180, 106, 114, .16) !important;
+    border-radius: 28px !important;
+    background: rgba(255, 250, 244, .94) !important;
+    box-shadow: 0 26px 70px rgba(45, 58, 71, .12) !important;
+    backdrop-filter: blur(16px) saturate(120%) !important;
+}
+
+#auth-card {
+    display: block !important;
+    flex: none !important;
+    width: min(100%, 410px) !important;
+    min-width: 0 !important;
+    max-width: 410px !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+}
+
+#auth-card::before { display: none !important; }
+#auth-card > * { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+#auth-card h1 { margin-bottom: 8px !important; color: var(--midnight-lagoon) !important; font-size: 2.05rem !important; }
+#auth-card .auth-copy { margin-bottom: 20px !important; color: rgba(45, 58, 71, .72) !important; line-height: 1.55 !important; }
+
+#auth-mode,
+#auth-mode > div,
+#auth-mode .wrap,
+#auth-mode .form,
+#auth-mode .gradio-radio {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+}
+#auth-mode > div,
+#auth-mode .wrap,
+#auth-mode .form,
+#auth-mode .gradio-radio {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 5px !important;
+}
+#auth-mode label {
+    position: relative !important;
+    flex: 1 1 50% !important;
+    width: 50% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    min-height: 40px !important;
+    padding: 10px 14px !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border: 1px solid rgba(180, 106, 114, .22) !important;
+    border-radius: 10px !important;
+    background: rgba(255, 247, 230, .78) !important;
+    color: var(--midnight-lagoon) !important;
+    font-weight: 750 !important;
+    white-space: nowrap !important;
+    cursor: pointer !important;
+}
+#auth-mode label:hover {
+    background: rgba(247, 200, 211, .42) !important;
+}
+#auth-mode label:has(input:checked) {
+    border-color: transparent !important;
+    background: linear-gradient(135deg, var(--rosewood), #ca7f8e) !important;
+    color: #ffffff !important;
+    box-shadow: 0 8px 18px rgba(180, 106, 114, .20) !important;
+}
+#auth-mode label span { color: inherit !important; }
+#auth-mode label input {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    min-height: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+#auth-card input,
+#auth-card textarea,
+#auth-card button { width: 100% !important; max-width: 100% !important; }
+
+#auth-visual {
+    position: relative !important;
+    display: block !important;
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    border: 1px solid rgba(255, 255, 255, .64) !important;
+    border-radius: 28px !important;
+    background:
+        radial-gradient(circle at 80% 16%, rgba(255, 255, 255, .56), transparent 24%),
+        radial-gradient(circle at 22% 78%, rgba(168, 181, 138, .44), transparent 30%),
+        linear-gradient(145deg, rgba(247, 200, 211, .86), rgba(169, 183, 198, .68) 58%, rgba(255, 247, 230, .88)) !important;
+}
+.auth-visual-inner {
+    position: relative;
+    display: flex !important;
+    width: 100%;
+    height: 100% !important;
+    padding: clamp(34px, 4.4vw, 68px) !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+}
+.auth-visual-kicker { color: var(--rosewood); font-size: .76rem; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; }
+.auth-visual-inner h2 { max-width: 700px; margin: 12px 0 12px; color: var(--midnight-lagoon); font-size: clamp(2.5rem, 4.6vw, 4.8rem); line-height: .98; letter-spacing: -.055em; }
+.auth-visual-inner p { max-width: 620px; margin: 0; color: rgba(45,58,71,.72); font-size: clamp(.95rem, 1.3vw, 1.12rem); line-height: 1.6; }
+.auth-visual-stack { position: relative !important; flex: 1 1 0; min-height: 300px !important; margin-top: 24px !important; }
+.auth-hero-document {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: min(330px, 46%);
+    aspect-ratio: .82;
+    padding: 28px 26px;
+    transform: translate(-50%, -48%) rotate(-2deg);
+    border: 1px solid rgba(255,255,255,.82);
+    border-radius: 24px;
+    background: rgba(255,255,255,.72);
+    box-shadow: 0 24px 60px rgba(45,58,71,.14);
+    backdrop-filter: blur(16px);
+}
+.auth-hero-document::before {
+    content: "AI";
+    display: grid;
+    place-items: center;
+    width: 48px; height: 48px;
+    margin-bottom: 24px;
+    border-radius: 15px;
+    background: linear-gradient(135deg, var(--rosewood), #ca8190);
+    color: #fff;
+    font-weight: 850;
+}
+.auth-doc-line { display: block; height: 10px; margin: 12px 0; border-radius: 999px; background: rgba(45,58,71,.12); }
+.auth-doc-line.wide { width: 92%; }
+.auth-doc-line.mid { width: 72%; }
+.auth-doc-line.short { width: 48%; }
+.auth-orbit {
+    position: absolute;
+    display: grid;
+    place-items: center;
+    width: 86px; height: 86px;
+    border-radius: 26px;
+    border: 1px solid rgba(255,255,255,.78);
+    background: rgba(255,255,255,.48);
+    color: var(--midnight-lagoon);
+    font-size: .72rem;
+    font-weight: 800;
+    box-shadow: 0 18px 45px rgba(45,58,71,.11);
+    backdrop-filter: blur(14px);
+}
+.auth-orbit.upload { left: 8%; top: 15%; transform: rotate(-7deg); }
+.auth-orbit.search { right: 8%; top: 31%; transform: rotate(7deg); }
+.auth-orbit.answer { left: 15%; bottom: 3%; transform: rotate(4deg); }
+
+/* Keep the entire workspace inside the browser viewport */
+html, body, .gradio-container, #workspace, #sidebar, #main-panel {
+    height: 100dvh !important;
+    min-height: 0 !important;
+    max-height: 100dvh !important;
+}
+#workspace { display: flex; overflow: hidden !important; }
+#main-panel { flex: 1 1 0 !important; width: 0 !important; min-width: 0 !important; overflow: hidden !important; }
+#chat-stage { flex: 1 1 0 !important; height: 0 !important; min-height: 0 !important; overflow: hidden !important; }
+#composer-shell { flex: 0 0 auto !important; min-height: 76px !important; max-height: 190px !important; }
+#composer, #question-input { min-width: 0 !important; }
+#composer { width: 100% !important; }
+
+/* Sidebar collapse */
+#sidebar, #main-panel {
+    transition: width .22s ease, min-width .22s ease, max-width .22s ease, flex-basis .22s ease, opacity .18s ease, padding .22s ease !important;
+}
+#workspace.sidebar-collapsed #sidebar {
+    flex-basis: 0 !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    border-right: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+#workspace.sidebar-collapsed #main-panel { width: 100% !important; }
+#sidebar-toggle { flex: 0 0 42px !important; width: 42px !important; min-width: 42px !important; max-width: 42px !important; }
+#sidebar-toggle button {
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 12px !important;
+    background: rgba(255,255,255,.68) !important;
+    color: var(--midnight-lagoon) !important;
+}
+
+/* Prevent left clipping and horizontal overflow in chat */
+#chatbot .messages,
+#chatbot .scroll-hide {
+    min-width: 0 !important;
+    padding-left: clamp(18px, 3.2vw, 46px) !important;
+    padding-right: clamp(18px, 3.2vw, 46px) !important;
+    overflow-x: hidden !important;
+}
+#chatbot .message {
+    max-width: min(780px, calc(100% - 12px)) !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+}
+#chatbot .message * { max-width: 100% !important; overflow-wrap: anywhere !important; }
+
+/* Busy-state notice shown while a chat request is active */
+#chat-processing-notice {
+    margin-left: auto;
+    padding: 7px 10px;
+    border: 1px solid rgba(180,106,114,.20);
+    border-radius: 999px;
+    background: rgba(247,200,211,.34);
+    color: var(--midnight-lagoon);
+    font-size: .72rem;
+    font-weight: 700;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition: opacity .15s ease, transform .15s ease;
+    pointer-events: none;
+}
+#chat-processing-notice.is-active { opacity: 1; transform: translateY(0); }
+
+/* Programmatic cancellation trigger used by the confirm-before-interrupt flow */
+#chat-cancel-trigger {
+    position: fixed !important;
+    left: -9999px !important;
+    top: -9999px !important;
+    width: 1px !important;
+    height: 1px !important;
+    min-width: 1px !important;
+    min-height: 1px !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    overflow: hidden !important;
+}
+
+@media (max-width: 980px) {
+    #auth-form-column { flex-basis: clamp(360px, 42vw, 440px) !important; width: clamp(360px, 42vw, 440px) !important; min-width: 360px !important; }
+    .auth-visual-inner h2 { font-size: clamp(2.1rem, 4vw, 3.6rem); }
+    #chat-processing-notice { display: none !important; }
+}
+@media (max-width: 820px) {
+    #auth-shell { padding: 18px !important; overflow-y: auto !important; }
+    #auth-form-column { flex: 1 1 100% !important; width: min(100%, 520px) !important; min-width: 0 !important; max-width: 520px !important; margin: 0 auto !important; }
+    #auth-visual { display: none !important; }
+}
+@media (max-width: 760px) {
+    #sidebar { position: absolute !important; z-index: 80 !important; left: 0 !important; top: 0 !important; width: min(310px, 88vw) !important; min-width: min(310px, 88vw) !important; max-width: min(310px, 88vw) !important; box-shadow: 18px 0 50px rgba(45,58,71,.18) !important; }
+    #workspace.sidebar-collapsed #sidebar { transform: translateX(-102%); width: min(310px, 88vw) !important; min-width: min(310px, 88vw) !important; max-width: min(310px, 88vw) !important; opacity: 1 !important; }
+    #main-panel { width: 100% !important; }
+    #chatbot .messages, #chatbot .scroll-hide { padding-left: 12px !important; padding-right: 12px !important; }
+    #composer, #selection-chips { padding-left: 10px !important; padding-right: 10px !important; }
+}
+
+/* Final auth tab visibility and composer interaction safeguards */
+#auth-mode {
+    overflow: hidden !important;
+}
+#auth-mode > div,
+#auth-mode .wrap,
+#auth-mode .form,
+#auth-mode .gradio-radio {
+    overflow: hidden !important;
+}
+#auth-mode label {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+}
+#auth-mode label span {
+    position: static !important;
+    display: inline-block !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0 !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    overflow: visible !important;
+    color: var(--midnight-lagoon) !important;
+    text-indent: 0 !important;
+    white-space: nowrap !important;
+}
+#auth-mode label:has(input:checked) span {
+    color: #ffffff !important;
+}
+#question-input,
+#question-input textarea {
+    pointer-events: auto !important;
+}
+"""
+
+
 def empty_state() -> dict[str, Any]:
     return EMPTY_STATE.copy()
 
@@ -3337,6 +3680,120 @@ def ask_question(
     )
 
 
+SIDEBAR_TOGGLE_JS = """
+() => {
+    const workspace = document.getElementById('workspace');
+    if (workspace) workspace.classList.toggle('sidebar-collapsed');
+    return [];
+}
+"""
+
+CHAT_START_JS = """
+(...args) => {
+    window.__ragChatBusy = true;
+    const notice = document.getElementById('chat-processing-notice');
+    if (notice) notice.classList.add('is-active');
+
+    const textarea = document.querySelector('#question-input textarea');
+    if (textarea) {
+        textarea.disabled = false;
+        textarea.readOnly = false;
+        textarea.removeAttribute('disabled');
+        textarea.removeAttribute('readonly');
+        textarea.style.pointerEvents = 'auto';
+    }
+    return args;
+}
+"""
+
+CHAT_END_JS = """
+() => {
+    window.__ragChatBusy = false;
+    const notice = document.getElementById('chat-processing-notice');
+    if (notice) notice.classList.remove('is-active');
+    return [];
+}
+"""
+
+CHAT_INTERRUPT_GUARD_JS = """
+() => {
+    if (window.__ragInterruptGuardBound) return [];
+    window.__ragInterruptGuardBound = true;
+    window.__ragChatBusy = false;
+    window.__ragBypassBusyOnce = false;
+
+    const keepComposerEditable = () => {
+        if (!window.__ragChatBusy) return;
+        const textarea = document.querySelector('#question-input textarea');
+        if (!textarea) return;
+        textarea.disabled = false;
+        textarea.readOnly = false;
+        textarea.removeAttribute('disabled');
+        textarea.removeAttribute('readonly');
+        textarea.style.pointerEvents = 'auto';
+    };
+
+    const observer = new MutationObserver(() => keepComposerEditable());
+    observer.observe(document.body, {subtree: true, attributes: true, attributeFilter: ['disabled', 'readonly', 'aria-disabled']});
+    window.setInterval(keepComposerEditable, 250);
+
+    const interruptAndResend = () => {
+        const cancelButton = document.querySelector('#chat-cancel-trigger button');
+        const sendButton = document.querySelector('#send-button button');
+
+        window.__ragChatBusy = false;
+        const notice = document.getElementById('chat-processing-notice');
+        if (notice) notice.classList.remove('is-active');
+
+        if (cancelButton) cancelButton.click();
+
+        window.setTimeout(() => {
+            if (!sendButton) return;
+            window.__ragBypassBusyOnce = true;
+            sendButton.click();
+        }, 180);
+    };
+
+    const handleBusySend = (event) => {
+        if (!window.__ragChatBusy) return false;
+        if (window.__ragBypassBusyOnce) {
+            window.__ragBypassBusyOnce = false;
+            return false;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === 'function') {
+            event.stopImmediatePropagation();
+        }
+
+        const shouldInterrupt = window.confirm(
+            'A response is still being generated.\\n\\n' +
+            'Press OK to stop the current response and send this message.\\n' +
+            'Press Cancel to keep waiting.'
+        );
+        if (shouldInterrupt) interruptAndResend();
+        return true;
+    };
+
+    document.addEventListener('click', (event) => {
+        const sendButton = event.target.closest('#send-button button');
+        if (!sendButton) return;
+        handleBusySend(event);
+    }, true);
+
+    document.addEventListener('keydown', (event) => {
+        const textarea = event.target.closest('#question-input textarea');
+        if (!textarea || event.key !== 'Enter' || event.shiftKey) return;
+        handleBusySend(event);
+    }, true);
+
+    return [];
+}
+"""
+
+
+
 with gr.Blocks(
     title="Document Assistant",
     fill_width=True,
@@ -3353,49 +3810,63 @@ with gr.Blocks(
         height="100vh",
         elem_id="auth-shell",
     ) as auth_panel:
-        with gr.Column(
-            scale=0,
-            min_width=470,
-            elem_id="auth-card",
-        ):
-            gr.Markdown("# Document Assistant")
-            gr.Markdown(
-                "A private workspace for grounded conversations with your documents.",
-                elem_classes=["auth-copy"],
+        with gr.Column(scale=5, min_width=360, elem_id="auth-form-column"):
+            with gr.Column(scale=1, min_width=0, elem_id="auth-card"):
+                gr.Markdown("# Welcome back")
+                gr.Markdown(
+                    "Sign in to your private document workspace, or create an account to get started.",
+                    elem_classes=["auth-copy"],
+                )
+                auth_mode = gr.Radio(
+                    choices=["Log in", "Sign up"],
+                    value="Log in",
+                    label=None,
+                    container=False,
+                    elem_id="auth-mode",
+                )
+                signup_name = gr.Textbox(
+                    label="Name",
+                    placeholder="Your name",
+                    value="",
+                    visible=False,
+                )
+                auth_email = gr.Textbox(
+                    label="Email",
+                    placeholder="you@example.com",
+                    value="",
+                )
+                auth_password = gr.Textbox(
+                    label="Password",
+                    type="password",
+                    placeholder="Enter your password",
+                    value="",
+                )
+                auth_confirmation = gr.Textbox(
+                    label="Confirm password",
+                    type="password",
+                    placeholder="Enter your password again",
+                    value="",
+                    visible=False,
+                )
+                auth_button = gr.Button("Log in", variant="primary")
+                auth_error = gr.Markdown("", elem_classes=["auth-error"])
+
+        with gr.Column(scale=7, min_width=420, elem_id="auth-visual"):
+            gr.HTML(
+                '<div class="auth-visual-inner">'
+                '<div><div class="auth-visual-kicker">Document AI workspace</div>'
+                '<h2>Your documents. Clear answers.</h2>'
+                '<p>Upload, search and chat with your files in one focused workspace. Answers stay grounded in the documents you choose.</p></div>'
+                '<div class="auth-visual-stack" aria-hidden="true">'
+                '<div class="auth-orbit upload">UPLOAD</div>'
+                '<div class="auth-orbit search">SEARCH</div>'
+                '<div class="auth-orbit answer">ANSWER</div>'
+                '<div class="auth-hero-document">'
+                '<span class="auth-doc-line wide"></span><span class="auth-doc-line mid"></span>'
+                '<span class="auth-doc-line wide"></span><span class="auth-doc-line short"></span>'
+                '<span class="auth-doc-line mid"></span><span class="auth-doc-line wide"></span>'
+                '</div></div></div>'
             )
-            auth_mode = gr.Radio(
-                choices=["Log in", "Sign up"],
-                value="Log in",
-                label="",
-                show_label=False,
-                container=False,
-            )
-            signup_name = gr.Textbox(
-                label="Name",
-                placeholder="Your name",
-                value="",
-                visible=False,
-            )
-            auth_email = gr.Textbox(
-                label="Email",
-                placeholder="you@example.com",
-                value="",
-            )
-            auth_password = gr.Textbox(
-                label="Password",
-                type="password",
-                placeholder="Enter your password",
-                value="",
-            )
-            auth_confirmation = gr.Textbox(
-                label="Confirm password",
-                type="password",
-                placeholder="Enter your password again",
-                value="",
-                visible=False,
-            )
-            auth_button = gr.Button("Log in", variant="primary")
-            auth_error = gr.Markdown("", elem_classes=["auth-error"])
 
     with gr.Row(
         visible=False,
@@ -3488,13 +3959,26 @@ with gr.Blocks(
 
         with gr.Column(
             scale=1,
-            min_width=500,
+            min_width=0,
             elem_id="main-panel",
         ):
             with gr.Row(elem_id="chat-header"):
+                sidebar_toggle = gr.Button(
+                    "☰",
+                    variant="secondary",
+                    scale=0,
+                    min_width=42,
+                    elem_id="sidebar-toggle",
+                )
                 gr.Markdown(
                     "### Chat with your documents\n"
-                    "Messages, sources, document mentions, and voice input stay in one fixed workspace"
+                    "Messages, sources, document mentions, and voice input stay in one fixed workspace",
+                    elem_id="chat-header-copy",
+                )
+                gr.HTML(
+                    '<div id="chat-processing-notice">'
+                    'Response in progress · wait for it to finish before sending another message'
+                    '</div>'
                 )
 
             with gr.Column(scale=1, min_width=0, elem_id="chat-stage"):
@@ -3609,6 +4093,10 @@ with gr.Blocks(
                         scale=0,
                         min_width=54,
                         elem_id="send-button",
+                    )
+                    cancel_chat_trigger = gr.Button(
+                        "Cancel current response",
+                        elem_id="chat-cancel-trigger",
                     )
 
     document_open_file = gr.Textbox(visible=False, elem_id="document-open-file")
@@ -3812,6 +4300,15 @@ with gr.Blocks(
                     }}""",
                     show_progress="minimal",
                 )
+
+    sidebar_toggle.click(
+        fn=None,
+        inputs=None,
+        outputs=None,
+        js=SIDEBAR_TOGGLE_JS,
+        queue=False,
+        show_progress="hidden",
+    )
 
     auth_mode.change(
         auth_mode_changed,
@@ -4023,7 +4520,7 @@ with gr.Blocks(
         show_progress="minimal",
     )
 
-    send_button.click(
+    send_event = send_button.click(
         ask_question,
         inputs=[
             auth_state,
@@ -4043,9 +4540,21 @@ with gr.Blocks(
             conversation_list,
         ],
         show_progress="hidden",
+        js=CHAT_START_JS,
+        concurrency_limit=1,
+        concurrency_id="chat-send",
+        trigger_mode="multiple",
+    )
+    send_event.then(
+        fn=None,
+        inputs=None,
+        outputs=None,
+        js=CHAT_END_JS,
+        queue=False,
+        show_progress="hidden",
     )
 
-    question_input.submit(
+    submit_event = question_input.submit(
         ask_question,
         inputs=[
             auth_state,
@@ -4065,8 +4574,37 @@ with gr.Blocks(
             conversation_list,
         ],
         show_progress="hidden",
+        js=CHAT_START_JS,
+        concurrency_limit=1,
+        concurrency_id="chat-send",
+        trigger_mode="multiple",
+    )
+    submit_event.then(
+        fn=None,
+        inputs=None,
+        outputs=None,
+        js=CHAT_END_JS,
+        queue=False,
+        show_progress="hidden",
     )
 
+    cancel_chat_trigger.click(
+        fn=None,
+        inputs=None,
+        outputs=None,
+        cancels=[send_event, submit_event],
+        queue=False,
+        show_progress="hidden",
+    )
+
+    demo.load(
+        fn=None,
+        inputs=None,
+        outputs=None,
+        js=CHAT_INTERRUPT_GUARD_JS,
+        queue=False,
+        show_progress="hidden",
+    )
 
     # Keep the original prompt-pill UI and make those pills fill the existing composer
     demo.load(
