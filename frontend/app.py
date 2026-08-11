@@ -3154,77 +3154,176 @@ def ask_question(
         load_conversations(current),
     )
 
-    payload: dict[str, Any] = {"message": clean_question, "top_k": 5}
+    payload: dict[str, Any] = {"message": clean_question, "top_k": 3}
     if selected_documents:
         payload["document_ids"] = selected_documents
     if current.get("conversation_id"):
         payload["conversation_id"] = current["conversation_id"]
 
+    def _error_yield(message: str, assistant_text: str | None = None):
+        error_history = [
+            *current_history,
+            {"role": "user", "content": clean_question},
+            {
+                "role": "assistant",
+                "content": assistant_text
+                or f"I could not complete that request. {message}",
+            },
+        ]
+        return (
+            current,
+            "",
+            error_history,
+            "",
+            gr.update(visible=False),
+            gr.update(visible=False),
+            toast("error", "Could not generate an answer", message),
+            load_conversations(current),
+        )
+
+    assembled = ""
+    source_list: list[dict[str, Any]] = []
+    updated = dict(current)
+    insufficient_context = False
+    stream_done = False
+
     try:
-        response = httpx.post(
-            f"{BACKEND_URL}/chat",
+        with httpx.stream(
+            "POST",
+            f"{BACKEND_URL}/chat/stream",
             headers=auth_headers(current),
             json=payload,
             timeout=REQUEST_TIMEOUT,
-        )
+        ) as response:
+            if response.status_code != 200:
+                # Drain a bit so friendly_api_error can read JSON error bodies.
+                try:
+                    body = response.read()
+                    peek = httpx.Response(
+                        response.status_code,
+                        content=body,
+                        headers=response.headers,
+                        request=response.request,
+                    )
+                    error_message = friendly_api_error(peek)
+                except Exception:
+                    error_message = (
+                        "The database, backend, or Ollama service is unavailable."
+                        if response.status_code == 503
+                        else "The request could not be completed. Please try again."
+                    )
+                yield _error_yield(error_message)
+                return
+
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                if line.startswith(":"):
+                    continue
+                if not line.startswith("data: "):
+                    continue
+                raw = line[6:].strip()
+                if not raw:
+                    continue
+                try:
+                    event = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = safe_text(event.get("type"))
+                if event_type == "meta":
+                    conversation_id = safe_text(event.get("conversation_id"))
+                    if conversation_id:
+                        updated = {**updated, "conversation_id": conversation_id}
+                    insufficient_context = bool(event.get("insufficient_context"))
+                    continue
+
+                if event_type == "token":
+                    token = event.get("content")
+                    if not isinstance(token, str) or not token:
+                        continue
+                    assembled += token
+                    stream_history = [
+                        *current_history,
+                        {"role": "user", "content": clean_question},
+                        {"role": "assistant", "content": assembled},
+                    ]
+                    yield (
+                        updated,
+                        "",
+                        stream_history,
+                        "",
+                        gr.update(visible=False),
+                        gr.update(visible=False),
+                        toast(
+                            "working",
+                            "Generating answer",
+                            "Streaming the grounded response…",
+                        ),
+                        load_conversations(updated),
+                    )
+                    continue
+
+                if event_type == "error":
+                    error_message = safe_text(event.get("message")) or (
+                        "The language model could not generate an answer"
+                    )
+                    yield _error_yield(error_message)
+                    return
+
+                if event_type == "done":
+                    stream_done = True
+                    conversation_id = safe_text(event.get("conversation_id"))
+                    if conversation_id:
+                        updated = {**updated, "conversation_id": conversation_id}
+                    final_answer = safe_text(event.get("answer")) or assembled
+                    assembled = final_answer
+                    raw_sources = (
+                        event.get("retrieved_sources") or event.get("sources") or []
+                    )
+                    source_list = raw_sources if isinstance(raw_sources, list) else []
+                    insufficient_context = bool(
+                        event.get("insufficient_context")
+                    ) or insufficient_context
+                    break
     except httpx.HTTPError:
-        error_message = backend_unavailable()
-        error_history = [
-            *current_history,
-            {"role": "user", "content": clean_question},
-            {
-                "role": "assistant",
-                "content": "I could not reach the backend. Make sure FastAPI is running, then try again.",
-            },
-        ]
-        yield (
-            current,
-            "",
-            error_history,
-            "",
-            gr.update(visible=False),
-            gr.update(visible=False),
-            toast("error", "Could not generate an answer", error_message),
-            load_conversations(current),
+        yield _error_yield(
+            backend_unavailable(),
+            "I could not reach the backend. Make sure FastAPI is running, then try again.",
+        )
+        return
+    except Exception as exc:
+        yield _error_yield(
+            safe_text(str(exc)) or "Unexpected error while generating an answer",
         )
         return
 
-    if response.status_code != 200:
-        error_message = friendly_api_error(response)
-        error_history = [
-            *current_history,
-            {"role": "user", "content": clean_question},
-            {
-                "role": "assistant",
-                "content": f"I could not complete that request. {error_message}",
-            },
-        ]
-        yield (
-            current,
-            "",
-            error_history,
-            "",
-            gr.update(visible=False),
-            gr.update(visible=False),
-            toast("error", "Could not generate an answer", error_message),
-            load_conversations(current),
-        )
+    if not stream_done and not assembled:
+        yield _error_yield("The stream ended before an answer was produced.")
         return
 
-    data = response.json()
-    answer = safe_text(data.get("answer")) or "No answer was generated."
-    raw_sources = data.get("retrieved_sources") or data.get("sources") or []
-    source_list = raw_sources if isinstance(raw_sources, list) else []
+    answer = assembled or "No answer was generated."
     answer_with_sources = answer + source_citations(source_list)
     updated_history = [
         *current_history,
         {"role": "user", "content": clean_question},
         {"role": "assistant", "content": answer_with_sources},
     ]
-    updated = {
-        **current,
-        "conversation_id": safe_text(data.get("conversation_id")) or current.get("conversation_id"),
-    }
+
+    if insufficient_context:
+        result_toast = toast(
+            "info",
+            "Limited document support",
+            "Not enough matching document context was found for a grounded answer.",
+        )
+    else:
+        result_toast = toast(
+            "success",
+            "Answer ready",
+            "The response is grounded in your selected documents."
+            if source_list
+            else "Response ready.",
+        )
 
     yield (
         updated,
@@ -3233,7 +3332,7 @@ def ask_question(
         format_sources(source_list),
         gr.update(visible=bool(source_list)),
         gr.update(visible=False),
-        toast("success", "Answer ready", "The response is grounded in your selected documents."),
+        result_toast,
         load_conversations(updated),
     )
 
