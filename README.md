@@ -1,1042 +1,737 @@
-# RAG Document Assistant
+<div align="center">
 
-> A private, multi-user Retrieval-Augmented Generation (RAG) workspace for uploading documents, extracting and indexing their content, and asking grounded questions with local AI models.
+# 🧠 RAG Document Assistant
 
-This project combines **FastAPI**, **Gradio**, **PostgreSQL + pgvector**, **Ollama**, **Tesseract OCR**, and **faster-whisper** into a complete local document assistant. It supports authenticated users, document ingestion, selective OCR, context-aware chunking, vector retrieval, conversation memory, source-aware answers, document lifecycle actions, and voice input.
+<h2>Local-first document intelligence with RAG, OCR, speech-to-text, vector search, and private LLM inference</h2>
 
----
+<p>
+Upload documents, extract even scanned content, index it as semantic vectors, ask grounded questions,
+continue multi-turn conversations, speak queries by voice, and receive answers with traceable sources —
+all through a Dockerized FastAPI + Gradio application.
+</p>
 
-## Overview
+<p>
+  <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/FastAPI-Backend-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Gradio-UI-F97316?style=for-the-badge&logo=gradio&logoColor=white" alt="Gradio" />
+  <img src="https://img.shields.io/badge/Ollama-Local_AI-111111?style=for-the-badge" alt="Ollama" />
+  <img src="https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL pgvector" />
+  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
+</p>
 
-A normal language model does not automatically know the contents of a user's private PDFs or notes. This application solves that problem with Retrieval-Augmented Generation.
+<p>
+  <a href="#-why-this-project-is-interesting">Why it matters</a> •
+  <a href="#-end-to-end-ai-pipeline">AI pipeline</a> •
+  <a href="#-technology-stack">Stack</a> •
+  <a href="#-getting-started">Run it</a> •
+  <a href="#-what-i-learned-building-it">Learning</a>
+</p>
 
-Instead of retraining the model, uploaded documents are processed once and stored as searchable vector embeddings. When a user asks a question, the system retrieves only the most relevant document chunks and gives them to the local LLM as grounded context.
-
-```text
-Upload document
-      ↓
-Validate and store
-      ↓
-Extract text
-      ↓
-Selective OCR when needed
-      ↓
-Chunk with physical overlap
-      ↓
-Add rolling previous-context summaries
-      ↓
-Create embeddings
-      ↓
-Store vectors in PostgreSQL + pgvector
-      ↓
-Document becomes searchable
-
-User question
-      ↓
-Resolve conversation context
-      ↓
-Create question embedding
-      ↓
-Vector similarity search
-      ↓
-Retrieve top relevant chunks
-      ↓
-Build grounded LLM prompt
-      ↓
-Generate answer with Ollama
-      ↓
-Return answer + sources
-```
+</div>
 
 ---
 
-# Core Features
+# ✨ Why This Project Is Interesting
 
-## Document ingestion
+This project goes well beyond a basic “chat with PDF” demo.
 
-- Multi-file document upload
-- User-specific document ownership
-- File size and extension validation
-- File-content validation instead of trusting extensions alone
-- File hashing for duplicate upload detection
-- Persistent original-file storage
-- Processing status tracking
-- Failure metadata and retry support
-- Authenticated document viewing
-- Delete confirmation and document cleanup
+It brings together several AI and software-engineering problems that normally live in separate projects:
 
-## Extraction and OCR
+<table>
+<tr>
+<td width="33%" valign="top">
 
-- Native PDF text extraction with PyMuPDF
-- Selective per-page OCR using Tesseract
-- OCR only when native text extraction is insufficient
-- Page metadata preserved for later source attribution
-- Support for text-oriented document formats handled by the extraction layer
+## 📄 Understand Documents
 
-## Context-aware chunking
+- Native PDF extraction
+- Selective **Tesseract OCR**
+- DOCX, TXT, Markdown, CSV, HTML and JSON ingestion
+- File validation and hashing
+- Page-aware metadata
+- Persistent document lifecycle
 
-- Real physical overlap between adjacent chunks
-- Rolling previous-context summaries
-- Page-aware chunk metadata
-- Stable chunk indexing
-- Chunk hashing / identity handling
-- Separation between local overlap and broader semantic context
+</td>
+<td width="33%" valign="top">
 
-Physical overlap and rolling summaries are intentionally different:
+## 🔎 Retrieve Meaning
 
-- **Physical overlap** repeats some real text across chunk boundaries so information is not lost when a sentence or idea crosses a split
-- **Rolling context** gives later chunks a compact description of what came before without copying the entire document history
+- Context-aware chunking
+- Physical chunk overlap
+- Rolling context summaries
+- **Ollama embeddings**
+- `nomic-embed-text`
+- **pgvector cosine search**
+- **HNSW vector index**
 
-## Retrieval-Augmented Generation
+</td>
+<td width="33%" valign="top">
 
-- Local semantic embeddings through Ollama
-- `nomic-embed-text` embedding model
-- 768-dimensional embeddings
-- PostgreSQL vector storage through pgvector
-- Similarity-based retrieval
-- Top-k relevant chunk selection
-- Optional restriction to selected documents
-- `@document` selection from the message composer
-- Grounded answer generation with `llama3.2`
-- Source information attached to answers
+## 💬 Answer Naturally
 
-## Conversation experience
+- Local **Ollama LLM**
+- `llama3.2`
+- Grounded prompts
+- Source citations
+- Streaming responses
+- Conversation memory
+- Follow-up resolution
+- Voice questions through **faster-whisper**
 
-- Persistent conversations
-- Multi-turn conversation memory
-- Follow-up question handling
-- Context-aware references such as "the second point" or "explain that"
-- New conversation workflow
-- Conversation deletion
-- Clickable starter prompts
-- Inline source display
+</td>
+</tr>
+</table>
 
-## Voice input
-
-- Microphone recording from the frontend
-- Speech-to-text through faster-whisper
-- CPU inference support
-- INT8 compute mode
-- Voice Activity Detection (VAD)
-- Persistent Hugging Face model cache
-- Transcript inserted into the message composer for review before sending
-
-## Interface
-
-- Responsive Gradio workspace
-- Persistent document sidebar
-- Conversation list
-- Document status badges
-- Inline **View**, **Retry**, and **Delete** actions
-- Full-screen in-app document preview
-- **Back to chat** navigation from the preview
-- Document selection controls
-- Voice input panel
-- Toast/status feedback
+The result is a private document workspace where retrieval, AI generation, OCR, audio, authentication, storage, and deployment concerns all meet in one system.
 
 ---
 
-# Technology Stack
+# 🤖 End-to-End AI Pipeline
 
-| Layer | Technology | Why it is used |
-|---|---|---|
-| Frontend | Gradio | Python-native UI for chat, upload, voice, state, and document controls |
-| API | FastAPI | Typed REST API, async support, validation, automatic OpenAPI docs |
-| Database | PostgreSQL | Persistent relational storage for users, documents, chunks, conversations, and messages |
-| Vector search | pgvector | Stores and compares embeddings directly inside PostgreSQL |
-| ORM | SQLAlchemy | Async database access and Python model mapping |
-| Migrations | Alembic | Versioned database schema changes |
-| Embeddings | Ollama + `nomic-embed-text` | Local semantic vector generation |
-| Generation | Ollama + `llama3.2` | Local answer generation |
-| PDF extraction | PyMuPDF | Fast native PDF text extraction |
-| OCR | Tesseract | Reads text from scanned/image-only pages |
-| Speech-to-text | faster-whisper | Local transcription with CPU/INT8 support |
-| HTTP client | httpx | Frontend/backend and backend/provider HTTP communication |
-| Containers | Docker Compose | Reproducible multi-service environment |
-
----
-
-# Architecture
+## 1. Document Ingestion
 
 ```mermaid
-flowchart TD
-    U[User] --> G[Gradio Frontend]
-    G -->|HTTP + Bearer token| F[FastAPI Backend]
-
-    F --> A[Authentication]
-    F --> D[Document Service]
-    F --> C[Chat / Conversation Service]
-    F --> S[Speech-to-Text Service]
-
-    D --> FS[Persistent Upload Storage]
-    D --> E[Extraction Layer]
-    E --> P[PyMuPDF]
-    E --> T[Tesseract OCR]
-
-    D --> CH[Chunking + Context]
-    CH --> O1[Ollama Embeddings\nnomic-embed-text]
-    O1 --> PG[(PostgreSQL + pgvector)]
-
-    C --> O1
-    C --> PG
-    C --> O2[Ollama LLM\nllama3.2]
-
-    S --> W[faster-whisper]
-    W --> HF[Persistent Hugging Face Cache]
+flowchart LR
+    A[Upload Document] --> B[Validate Type + Size]
+    B --> C[Hash & Duplicate Check]
+    C --> D[Store Original File]
+    D --> E[Extract Text]
+    E --> F{Enough native text?}
+    F -- Yes --> G[Keep native text]
+    F -- No --> H[Tesseract OCR]
+    G --> I[Chunk + Context]
+    H --> I
+    I --> J[Ollama Embeddings]
+    J --> K[(PostgreSQL + pgvector)]
+    K --> L[Document Ready]
 ```
 
-### Service communication
+### Extraction is format-aware
+
+The extraction layer supports:
+
+`PDF` · `DOCX` · `TXT` · `Markdown` · `CSV` · `HTML` · `JSON`
+
+For PDFs, the system first tries **PyMuPDF native extraction**. OCR is not blindly applied to every page.
+
+Instead, a page falls back to **Tesseract OCR only when its native text is below the configured threshold**. This keeps text PDFs fast while still supporting scanned and image-only documents.
+
+---
+
+## 2. Context-Aware Chunking
+
+The project deliberately separates two ideas that are often confused:
+
+### Physical overlap
+
+Adjacent chunks share real boundary text so information is less likely to disappear when a sentence crosses a split.
+
+### Rolling context summaries
+
+Later chunks can carry a compact summary of earlier content, giving retrieval and generation more semantic continuity without duplicating the entire document history.
+
+That creates a richer representation than simple fixed-size splitting:
 
 ```text
-Browser
-  ↓
-Gradio :7860
-  ↓
-FastAPI :8000
-  ├── PostgreSQL/pgvector :5432
-  └── Ollama on Windows host :11434
+Document
+   ↓
+Page-aware extraction
+   ↓
+Chunk 0 ────────────────┐
+   ↓ overlap             │
+Chunk 1 + prior summary  │
+   ↓ overlap             ├─→ semantic embedding
+Chunk 2 + prior summary  │
+   ↓                     │
+... ─────────────────────┘
 ```
 
-Inside Docker, the backend reaches Ollama through:
+---
+
+## 3. Embeddings + Vector Database
+
+The default local embedding stack is:
+
+```text
+nomic-embed-text
+        ↓
+768-dimensional embedding
+        ↓
+PostgreSQL + pgvector
+        ↓
+HNSW cosine-distance index
+```
+
+Each searchable chunk stores:
+
+- extracted text
+- page number
+- chunk index
+- chunk hash
+- rolling context summary
+- vector embedding
+- document ownership metadata
+
+### Why PostgreSQL + pgvector?
+
+Using pgvector keeps **relational application data and semantic vectors in the same database**.
+
+That means retrieval can combine vector similarity with normal application constraints such as:
+
+- authenticated user ownership
+- document processing status
+- selected document IDs
+- top-k limits
+- relevance score thresholds
+
+The migration layer also adds an **HNSW index** for approximate nearest-neighbour search as the corpus grows.
+
+---
+
+## 4. Retrieval-Augmented Generation
+
+```mermaid
+flowchart LR
+    Q[User Question] --> I[Intent + Follow-up Resolution]
+    I --> QE[Query Embedding]
+    QE --> VS[pgvector Similarity Search]
+    VS --> T[Top Relevant Chunks]
+    T --> P[Grounded Prompt]
+    P --> L[Ollama llama3.2]
+    L --> A[Answer + Citations]
+    A --> M[Persist Conversation]
+```
+
+The LLM is **not retrained on uploaded files**.
+
+Instead, RAG retrieves the most relevant chunks at query time and injects them into a grounded prompt. The prompt explicitly tells the model not to invent document facts when the retrieved evidence is insufficient.
+
+That makes the project about **retrieval quality, context construction, grounding, and traceability** rather than pretending uploaded documents magically become part of the model.
+
+---
+
+# 🎙️ Speech-to-Text
+
+Voice input is handled locally with **faster-whisper**.
+
+### The STT pipeline includes
+
+- microphone/audio upload from the Gradio UI
+- local Whisper-family transcription
+- CPU execution support
+- `int8` compute mode
+- optional language selection
+- configurable beam search
+- Voice Activity Detection
+- audio validation and size limits
+- persistent Hugging Face model caching through Docker volumes
+
+The transcription is inserted into the composer for review before being sent as a RAG question.
+
+This turns the system into a multimodal workflow:
+
+```text
+Voice → STT → text query → embedding → retrieval → LLM → cited answer
+```
+
+---
+
+# 👁️ OCR for Scanned Documents
+
+OCR is integrated into the ingestion path instead of being a separate tool.
+
+For each PDF page:
+
+1. PyMuPDF attempts native text extraction
+2. The extracted character count is checked
+3. Weak/image-only pages are rendered
+4. Tesseract OCR is attempted
+5. The richer result is kept
+6. Page metadata records whether text came from native extraction or OCR
+
+The code also includes a Tesseract CLI fallback when the PyMuPDF OCR path does not produce enough readable text.
+
+This is especially useful for:
+
+- scanned lecture notes
+- image-only PDFs
+- printed forms
+- archived documents
+- mixed PDFs containing both text and scanned pages
+
+---
+
+# 🧠 Local AI with Ollama
+
+The normal application path is designed to work locally:
+
+| AI task | Default model |
+|---|---|
+| Embeddings | `nomic-embed-text` |
+| Answer generation | `llama3.2` |
+| Speech transcription | `faster-whisper` |
+
+Ollama handles both embedding generation and answer generation on the host machine.
+
+Docker containers reach the host Ollama service using:
 
 ```text
 http://host.docker.internal:11434
 ```
 
-`localhost` inside a container points to that container, not to the Windows host.
+The project also exposes useful performance controls such as:
+
+- model keep-alive
+- startup warmup
+- context-window size
+- maximum predicted tokens
+- request timeout
+- retrieved chunk character caps
+- context-summary caps
+- relevance thresholds
+
+These settings matter a lot when running LLMs locally on CPU-constrained hardware.
+
+> The provider abstraction also supports OpenAI for embeddings and/or generation, but the primary project setup is local Ollama.
 
 ---
 
-# Repository Structure
+# 🏗️ System Architecture
 
-The exact structure may evolve, but the application is organized around these responsibilities:
+```mermaid
+flowchart TD
+    U[User] --> G[Gradio Frontend :7860]
+    G -->|HTTP + Bearer token| API[FastAPI Backend :8000]
 
-```text
-rag-document-assistant/
-├── backend/
-│   ├── app/
-│   │   ├── api/              # FastAPI routes
-│   │   ├── models/           # SQLAlchemy models
-│   │   ├── schemas/          # API request/response models
-│   │   ├── services/         # ingestion, retrieval, chat, storage, STT
-│   │   ├── providers/        # LLM and embedding providers
-│   │   ├── extraction/       # document extraction / OCR logic
-│   │   ├── core/             # configuration and shared concerns
-│   │   └── main.py           # FastAPI application
-│   ├── Dockerfile
-│   └── entrypoint.sh
-├── frontend/
-│   ├── app.py                # Gradio application
-│   └── Dockerfile
-├── alembic/                  # database migrations
-├── tests/                    # automated tests
-├── docker-compose.yml
-├── .env.example
-├── requirements*.txt / pyproject.toml
-└── README.md
+    API --> AUTH[Auth + User Isolation]
+    API --> DOC[Document Ingestion]
+    API --> CHAT[RAG Chat]
+    API --> AUDIO[Speech-to-Text]
+
+    DOC --> EX[Extraction Layer]
+    EX --> PDF[PyMuPDF]
+    EX --> OCR[Tesseract OCR]
+
+    DOC --> CH[Chunker + Context Summaries]
+    CH --> EMB[Ollama / nomic-embed-text]
+    EMB --> PG[(PostgreSQL + pgvector)]
+
+    CHAT --> EMB
+    CHAT --> PG
+    CHAT --> LLM[Ollama / llama3.2]
+
+    AUDIO --> WH[faster-whisper]
+    WH --> HF[(Hugging Face Cache)]
+
+    API --> SQLA[SQLAlchemy Async ORM]
+    SQLA --> PG
+    MIG[Alembic Migrations] --> PG
+```
+
+### Dockerized services
+
+| Service | Purpose | Port |
+|---|---|---:|
+| `postgres` | PostgreSQL + pgvector | `5432` |
+| `backend` | FastAPI application | `8000` |
+| `frontend` | Gradio interface | `7860` |
+| Ollama | Runs on the host machine | `11434` |
+
+Docker volumes persist:
+
+- PostgreSQL data
+- uploaded documents
+- downloaded faster-whisper / Hugging Face model files
+
+---
+
+# 🔐 Authentication & Multi-User Isolation
+
+The application is built as a multi-user workspace rather than a single global document pool.
+
+It includes:
+
+- account registration and login
+- PBKDF2-SHA256 password hashing
+- random password salts
+- signed bearer access tokens
+- token expiration
+- authenticated document ownership
+- authenticated conversation ownership
+- user-scoped vector retrieval
+- duplicate checks scoped per user
+
+The retrieval query filters by the authenticated user before returning document chunks, which is an important detail in any multi-user RAG system.
+
+---
+
+# 💬 Conversation Intelligence
+
+The chat layer includes more than one-shot Q&A.
+
+### Multi-turn memory
+
+Recent conversation messages are persisted and loaded for follow-up questions.
+
+### Follow-up resolution
+
+The system can rewrite references such as:
+
+> “Explain the third point”
+
+using previous assistant context before retrieval.
+
+### Lightweight intent routing
+
+Simple greetings, thanks, farewells, and calculation-like messages can bypass document retrieval instead of wasting an embedding + vector-search + LLM cycle.
+
+### Streaming
+
+The chat endpoint also supports **Server-Sent Events (SSE)** so answer tokens can be streamed progressively to the frontend.
+
+### Source awareness
+
+Retrieved chunks preserve filename, page, chunk index, score, and excerpts so generated answers can be tied back to the source material.
+
+---
+
+# 🧰 Technology Stack
+
+| Layer | Technology | What it contributes |
+|---|---|---|
+| Language | **Python 3.12** | Core application and AI pipeline |
+| Frontend | **Gradio** | Chat workspace, uploads, document controls, voice input |
+| API | **FastAPI** | Typed async REST API and OpenAPI docs |
+| ORM | **SQLAlchemy Async** | Async persistence and model mapping |
+| Migrations | **Alembic** | Versioned schema evolution |
+| Database | **PostgreSQL** | Users, documents, chunks, conversations, messages |
+| Vector DB | **pgvector** | Vector storage and cosine similarity search |
+| ANN indexing | **HNSW** | Faster approximate vector retrieval at scale |
+| Local LLM | **Ollama + llama3.2** | Grounded answer generation |
+| Embeddings | **Ollama + nomic-embed-text** | 768-dimensional semantic vectors |
+| OCR | **Tesseract + PyMuPDF** | Selective OCR for scanned PDF pages |
+| STT | **faster-whisper** | Local voice transcription |
+| Extraction | **python-docx, pandas, BeautifulSoup** | DOCX, CSV, HTML and text-oriented formats |
+| HTTP | **httpx** | Async service/provider communication |
+| Containers | **Docker + Docker Compose** | Reproducible multi-service environment |
+| Testing | **pytest / pytest-asyncio** | Unit, integration, security and E2E tests |
+| Quality | **Ruff + mypy** | Linting, formatting and type checking |
+| CI | **GitHub Actions** | Repository hygiene and secret checks |
+
+---
+
+# 🚀 Getting Started
+
+## 1. Prerequisites
+
+Install:
+
+- **Docker Desktop** with Docker Compose
+- **Ollama**
+- Git
+- enough disk space for Docker volumes and local AI models
+
+The Docker backend image installs Tesseract automatically.
+
+---
+
+## 2. Clone the Repository
+
+```bash
+git clone <YOUR_REPOSITORY_URL>
+cd RAG-Document-Assistant
 ```
 
 ---
 
-# Prerequisites
+## 3. Create the Environment File
 
-For the normal Docker workflow you need:
+```bash
+cp .env.example .env
+```
 
-- **Docker Desktop** with Docker Compose
-- **Ollama** installed and running on the host machine
-- Enough free disk space for Docker images, PostgreSQL data, uploaded documents, and local AI models
+On Windows Command Prompt:
 
-For direct local Python development you also need a compatible Python environment and the project's Python dependencies.
+```bat
+copy .env.example .env
+```
+
+At minimum, replace:
+
+```env
+AUTH_SECRET_KEY=replace_with_a_long_random_secret
+POSTGRES_PASSWORD=replace_with_a_database_password
+```
+
+Generate a strong application secret with:
+
+```bash
+openssl rand -hex 32
+```
+
+Never commit the real `.env` file.
 
 ---
 
-# Ollama Setup
-
-Install and start Ollama on the host machine, then pull the models used by the project:
+## 4. Pull the Local AI Models
 
 ```bash
 ollama pull llama3.2
 ollama pull nomic-embed-text
 ```
 
-Verify:
+Make sure Ollama is running:
 
 ```bash
 ollama list
 ```
 
-The backend container connects to the host Ollama service through `host.docker.internal`.
-
 ---
 
-# Environment Configuration
-
-Create a local `.env` file in the repository root.
-
-**Do not commit `.env` to Git.** It contains secrets and machine-specific configuration.
-
-A development configuration can use values similar to:
-
-```env
-# Application
-APP_ENV=development
-AUTH_SECRET_KEY=replace_with_a_long_random_secret
-
-# PostgreSQL
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres_password
-POSTGRES_DB=rag_db
-
-# Embeddings
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=nomic-embed-text
-EMBEDDING_DIMENSION=768
-
-# LLM
-LLM_PROVIDER=ollama
-LLM_MODEL=llama3.2
-
-# Chunk context
-CHUNK_CONTEXT_SUMMARY_ENABLED=true
-CHUNK_CONTEXT_LLM_STRIDE=12
-
-# OCR
-OCR_ENABLED=true
-OCR_LANGUAGE=eng
-OCR_DPI=200
-
-# Speech-to-text
-TRANSCRIPTION_PROVIDER=faster-whisper
-TRANSCRIPTION_MODEL=small
-TRANSCRIPTION_DEVICE=cpu
-TRANSCRIPTION_COMPUTE_TYPE=int8
-TRANSCRIPTION_LANGUAGE=
-TRANSCRIPTION_BEAM_SIZE=5
-TRANSCRIPTION_TIMEOUT_SECONDS=180
-MAX_AUDIO_SIZE_MB=25
-ALLOWED_AUDIO_EXTENSIONS=wav,mp3,m4a,ogg,webm,flac
-```
-
-For a stronger authentication secret:
-
-```bash
-openssl rand -hex 32
-```
-
-If OpenSSL is not available, generate a long random secret using another secure method.
-
----
-
-# Docker Setup
-
-## Build and start the complete stack
-
-From the repository root:
+## 5. Build and Start the Stack
 
 ```bash
 docker compose build
 docker compose up -d
 ```
 
-Check service status:
+Check status:
 
 ```bash
 docker compose ps
 ```
 
-Expected services:
+---
 
-```text
-postgres
-backend
-frontend
-```
+## 6. Open the Application
 
-The PostgreSQL and backend services should report healthy once startup is complete.
+| Service | URL |
+|---|---|
+| Gradio UI | `http://127.0.0.1:7860` |
+| FastAPI docs | `http://127.0.0.1:8000/docs` |
+| API health | `http://127.0.0.1:8000/api/v1/health` |
+| API readiness | `http://127.0.0.1:8000/api/v1/ready` |
 
-## Open the application
+---
 
-Frontend:
-
-```text
-http://127.0.0.1:7860
-```
-
-Backend API documentation:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Backend health endpoint:
-
-```text
-http://127.0.0.1:8000/api/v1/health
-```
-
-## Normal startup
-
-Once images have already been built:
-
-```bash
-docker compose up -d
-```
-
-## Normal shutdown
+## 7. Stop the Stack
 
 ```bash
 docker compose down
 ```
 
-Do **not** routinely use:
-
-```bash
-docker compose down -v
-```
-
-The `-v` flag removes named volumes and can delete PostgreSQL data, stored uploads, and the cached Whisper model.
+> Avoid `docker compose down -v` unless you intentionally want to delete PostgreSQL data, uploaded documents, and cached Whisper models.
 
 ---
 
-# Persistent Docker Data
+# 🐳 What Docker Adds to This Project
 
-The Compose stack uses named volumes for persistent state.
+Docker is not just packaging here; it solves several real integration problems.
 
-| Volume | Purpose |
-|---|---|
-| `postgres_data` | Users, documents, chunks, embeddings, conversations, messages |
-| `uploads` | Original uploaded files |
-| `hf_cache` | Downloaded faster-whisper / Hugging Face model files |
+### Reproducible services
 
-Containers are disposable. These volumes are the persistent state.
+PostgreSQL/pgvector, FastAPI, and Gradio start with one Compose file.
 
----
+### Service discovery
 
-# Development Workflow
-
-For fast frontend iteration, it is often more convenient to keep PostgreSQL and the backend in Docker while running the frontend directly from the local virtual environment.
-
-Start the required Docker services:
-
-```bash
-docker compose up -d postgres backend
-```
-
-Stop the Docker frontend so port `7860` is free:
-
-```bash
-docker compose stop frontend
-```
-
-Activate the virtual environment in Git Bash:
-
-```bash
-source .venv/Scripts/activate
-```
-
-Point the local frontend to the Docker backend:
-
-```bash
-export BACKEND_URL=http://127.0.0.1:8000/api/v1
-```
-
-Run Gradio locally:
-
-```bash
-python frontend/app.py
-```
-
-After changing frontend code, restart only the local frontend instead of rebuilding Docker.
-
-When the application is stable, rebuild the final Docker image:
-
-```bash
-docker compose build
-docker compose up -d
-```
-
----
-
-# Document Ingestion Pipeline
-
-## 1. Authentication and upload
-
-The frontend sends the selected file to the authenticated FastAPI upload endpoint.
-
-The backend associates the document with the authenticated user rather than trusting a user ID supplied by the browser.
-
-## 2. Validation
-
-The upload pipeline checks:
-
-- supported extension
-- configured maximum size
-- file signature / format validity
-- duplicate file hash for that user
-
-This avoids trusting a filename such as `document.pdf` without checking whether the content is really a PDF.
-
-## 3. Storage
-
-The original file is stored in the persistent uploads volume.
-
-PostgreSQL stores metadata such as:
-
-- document UUID
-- owner/user UUID
-- filename
-- storage path
-- MIME type
-- file size
-- file hash
-- processing status
-- failure information
-
-## 4. Extraction
-
-Text-native PDFs are extracted with PyMuPDF.
-
-## 5. Selective OCR
-
-If a PDF page does not contain enough usable native text, that page can be rendered and passed to Tesseract OCR.
-
-This is intentionally selective:
+The backend reaches PostgreSQL through the Compose service name:
 
 ```text
-Text page  → native extraction
-Scan page  → OCR
-Text page  → native extraction
+postgres:5432
 ```
 
-Running OCR on every page would be slower and can be less accurate than native extraction.
+### Host/container networking
 
-## 6. Chunking
+Because Ollama runs on the host instead of inside Compose, the backend uses:
 
-Extracted text is split into smaller searchable units.
+```text
+host.docker.internal:11434
+```
 
-Chunks keep useful metadata such as page number and chunk index.
+### Persistent state
 
-## 7. Physical overlap
+Named volumes keep:
 
-Adjacent chunks contain a controlled amount of repeated boundary text.
+- vector/database state
+- uploaded documents
+- Whisper model cache
 
-This helps preserve information when a sentence or concept crosses a chunk boundary.
+even when containers are recreated.
 
-## 8. Rolling previous-context summary
+### Health-aware startup
 
-Chunks can also receive a compact summary of previous content.
+The backend waits for PostgreSQL health before starting, and the frontend depends on the backend health check.
 
-This provides broader semantic continuity without attaching the entire document history to every chunk.
-
-## 9. Embeddings
-
-The text used for retrieval is sent to `nomic-embed-text` through Ollama.
-
-Each chunk receives a 768-dimensional vector embedding.
-
-## 10. Vector indexing
-
-The chunk text, metadata, context information, and vector are persisted in PostgreSQL using pgvector.
-
-Once indexing succeeds, the document becomes `ready` and can be used by chat retrieval.
+Those details made Docker part of the system design rather than an afterthought.
 
 ---
 
-# RAG Question Flow
+# 🧪 Testing, Evaluation & Quality
 
-A normal document question follows this path:
+The project includes automated coverage across multiple levels.
 
-```text
-Question
-  ↓
-Conversation / follow-up resolution
-  ↓
-Question embedding
-  ↓
-Filter by authenticated user
-  ↓
-Optional filter by selected document IDs
-  ↓
-pgvector similarity search
-  ↓
-Top relevant chunks
-  ↓
-Grounded prompt
-  ↓
-llama3.2 through Ollama
-  ↓
-Answer + retrieved sources
-  ↓
-Persist conversation/message history
-```
+### Test categories
 
-The application does **not** retrain `llama3.2` on uploaded files.
-
-The model weights remain unchanged. RAG supplies relevant document content to the model at request time.
-
----
-
-# Embeddings and Vector Search
-
-An embedding converts text into a numeric semantic representation.
-
-Two passages can be close in vector space even if they do not use exactly the same words.
-
-For example:
-
-```text
-"estimate the distance to the goal"
-```
-
-can be semantically related to:
-
-```text
-"a heuristic approximates the remaining path cost"
-```
-
-This is why vector retrieval is more flexible than simple keyword matching.
-
-The project uses:
-
-```text
-nomic-embed-text → 768-dimensional vectors
-PostgreSQL        → relational application data
-pgvector          → vector similarity operations
-```
-
-Keeping vectors in PostgreSQL also makes it straightforward to apply relational filters such as user ownership and selected document IDs before or during retrieval.
-
----
-
-# Conversation Memory
-
-Conversation history is persisted so follow-up questions can refer to earlier messages.
-
-For example:
-
-```text
-User: Give me the three main advantages.
-Assistant: 1... 2... 3...
-User: Explain the third point in more detail.
-```
-
-The final message is ambiguous by itself. Conversation-aware processing uses recent context so retrieval can understand what "the third point" refers to.
-
----
-
-# Document Selection and `@` Mentions
-
-Users can choose which ready documents a conversation should search.
-
-The frontend supports both:
-
-- document checkboxes
-- `@` document selection in the message composer
-
-When document IDs are selected, the chat request includes them and retrieval is restricted accordingly.
-
-With no explicit selection, the assistant can search the user's available ready documents according to backend retrieval rules.
-
----
-
-# Document Viewer
-
-The **View** action does not expose uploaded files through a public static directory.
-
-Instead:
-
-1. the frontend calls an authenticated document-content endpoint
-2. the backend verifies document ownership
-3. the original bytes are returned with an appropriate MIME type
-4. the frontend creates a browser Blob URL
-5. the document is displayed inside an in-app iframe preview
-6. **Back to chat** closes the preview and returns to the existing workspace
-
-This preserves authentication while keeping the viewing experience inside the application.
-
----
-
-# Speech-to-Text
-
-Voice input is handled separately from the normal RAG pipeline.
-
-```text
-Microphone
-   ↓
-Gradio audio recording
-   ↓
-FastAPI /audio/transcribe
-   ↓
-faster-whisper
-   ↓
-Transcript
-   ↓
-Message composer
-   ↓
-Normal RAG chat flow when the user sends
-```
-
-The default local configuration uses CPU + INT8 inference.
-
-The first transcription can be noticeably slower because the Whisper model may need to be downloaded and loaded. The Docker `hf_cache` volume keeps the downloaded model for later runs.
-
-### Check the model cache
-
-```bash
-docker compose exec backend sh -c "du -sh /app/.cache/huggingface"
-```
-
-### Inspect transcription configuration
-
-```bash
-docker compose exec backend env | grep -E "TRANSCRIPTION_MODEL|TRANSCRIPTION_LANGUAGE|TRANSCRIPTION_BEAM_SIZE|TRANSCRIPTION_COMPUTE_TYPE"
-```
-
----
-
-# API Documentation
-
-FastAPI automatically exposes OpenAPI documentation.
-
-Swagger UI:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Typical API areas include:
-
+- API behavior
 - authentication
-- health
-- documents
-- document content
-- document retry/reprocessing
-- conversations
-- chat
-- audio transcription
+- auth boundary/security cases
+- chunking and embeddings
+- extraction / OCR behavior
+- context features
+- pgvector retrieval
+- end-to-end RAG workflows
 
-The API is the application boundary: the Gradio frontend communicates with FastAPI instead of directly accessing PostgreSQL, pgvector, Ollama, or file storage.
-
----
-
-# Useful Docker Commands
-
-### Service status
-
-```bash
-docker compose ps
-```
-
-### Follow backend logs
-
-```bash
-docker compose logs -f backend
-```
-
-### Follow frontend logs
-
-```bash
-docker compose logs -f frontend
-```
-
-### Last 100 backend log lines
-
-```bash
-docker compose logs backend --tail=100
-```
-
-### Restart only backend
-
-```bash
-docker compose restart backend
-```
-
-### Restart only frontend
-
-```bash
-docker compose restart frontend
-```
-
-### Recreate backend after `.env` / Compose environment changes
-
-```bash
-docker compose up -d --force-recreate backend
-```
-
-### Rebuild after source or dependency changes
-
-```bash
-docker compose build
-docker compose up -d
-```
-
----
-
-# Troubleshooting
-
-## Backend cannot reach Ollama
-
-Check Ollama on the host:
-
-```bash
-ollama list
-```
-
-The Docker backend should use:
-
-```text
-http://host.docker.internal:11434
-```
-
-not `localhost:11434`.
-
-## Frontend does not load through Docker
-
-The Gradio server must bind to all container interfaces:
-
-```text
-0.0.0.0:7860
-```
-
-Binding only to `127.0.0.1` inside the container prevents Docker's published port from reaching the server.
-
-## Whisper cache permission error
-
-If logs contain a permission error under:
-
-```text
-/app/.cache/huggingface
-```
-
-check the runtime user and directory ownership:
-
-```bash
-docker compose exec backend id
-docker compose exec -u root backend sh -c "ls -ld /app/.cache /app/.cache/huggingface"
-```
-
-The cache must be writable by the backend process.
-
-## First voice transcription is slow
-
-The model may still be downloading/loading. Follow the backend logs:
-
-```bash
-docker compose logs -f backend
-```
-
-Later requests should reuse the persistent model cache.
-
-## Scanned PDF cannot be read
-
-Confirm OCR is enabled and Tesseract is present inside the backend container:
-
-```bash
-docker compose exec backend tesseract --version
-docker compose exec backend tesseract --list-langs
-```
-
-## Old document cannot be viewed
-
-Documents created under a previous runtime can contain storage paths that are not valid inside the current container environment. New Docker uploads should use the persistent `/app/data/uploads` storage path.
-
-## Port already in use
-
-If running the frontend directly on Windows, stop the Docker frontend first:
-
-```bash
-docker compose stop frontend
-```
-
-If returning to the complete Docker stack, stop the local Python frontend before starting the Docker frontend.
-
----
-
-# Validation and Quality Checks
-
-When the development dependencies are installed, useful checks include:
-
-```bash
-ruff check backend frontend
-```
-
-and:
+Run:
 
 ```bash
 pytest
 ```
 
-Run the checks available in the repository before merging or publishing changes. Do not treat a successful Docker startup as a replacement for automated tests.
+Lint:
 
----
-
-# Security Notes
-
-This project includes several important security boundaries:
-
-- documents are associated with authenticated users
-- protected document operations verify ownership in the backend
-- uploaded files are validated instead of trusting only extensions
-- original files are not intended to be exposed as an unrestricted public directory
-- `.env` should remain untracked
-- authentication secrets should be long and unpredictable
-
-For a production deployment, additional hardening would be appropriate, including HTTPS, stronger secret management, rate limiting, malware scanning, centralized monitoring, backups, and potentially object storage for original files.
-
----
-
-# Performance Notes
-
-The most expensive operations in the system are typically:
-
-- OCR
-- local LLM generation
-- semantic context summarization
-- embedding generation
-- first-time Whisper model download/load
-
-Several design choices reduce unnecessary cost:
-
-- OCR only pages that need it
-- embed documents once during ingestion
-- retrieve only top relevant chunks at question time
-- use rolling summaries instead of attaching unlimited previous text
-- reduce unnecessary LLM summarization frequency during ingestion
-- keep downloaded speech models in a persistent cache
-- use direct frontend execution during UI development rather than rebuilding Docker for every CSS/JS change
-
----
-
-# RAG vs Fine-Tuning
-
-This project uses **RAG**, not model fine-tuning.
-
-### RAG
-
-- leaves model weights unchanged
-- retrieves external/private knowledge when needed
-- works well for documents that can change frequently
-- provides source traceability
-
-### Fine-tuning
-
-- modifies model weights
-- is useful for changing model behavior, style, or task specialization
-- is not required just to make a model answer questions about newly uploaded files
-
----
-
-# Current Local Models
-
-```text
-Generation model : llama3.2
-Embedding model  : nomic-embed-text
-Embedding size   : 768 dimensions
-Speech model     : faster-whisper small (configurable)
-OCR language     : English (eng)
+```bash
+ruff check .
 ```
 
-All model choices are configurable through environment settings and provider abstractions.
+Format check:
 
----
-
-# Demo Flow
-
-A reliable project demonstration can follow this order:
-
-1. Start the Docker stack
-2. Open the Gradio application
-3. Sign in or create a user
-4. Upload a small text-native PDF
-5. Explain the document processing statuses
-6. Open the document using **View**
-7. Use **Back to chat**
-8. Ask a document-specific question
-9. Show the retrieved source information
-10. Ask a follow-up such as "explain the second point"
-11. Use `@` to restrict the question to a particular document
-12. Record a short voice question
-13. Show an OCR-capable/scanned document if needed
-14. Demonstrate Retry on a retryable failed document if one is available
-15. Demonstrate Delete and its confirmation dialog
-
----
-
-# Key Engineering Decisions
-
-### Why FastAPI instead of putting everything inside Gradio?
-
-The API layer owns authentication, document processing, retrieval, storage, and model access. The UI remains a client of the application rather than becoming the application itself.
-
-### Why PostgreSQL + pgvector?
-
-The project needs relational state and vector search. pgvector keeps those concerns in one persistent database and allows vector retrieval to work alongside user/document ownership filters.
-
-### Why local Ollama models?
-
-Private documents can stay on the local machine, the application does not depend on a paid cloud-generation API, and model providers can be swapped through configuration/abstractions.
-
-### Why selective OCR?
-
-Native extraction is much cheaper than OCR. Tesseract is used only when the page requires it.
-
-### Why physical overlap and rolling summaries?
-
-Overlap protects local chunk boundaries. Rolling summaries preserve broader document context. They solve different problems and can be used together.
-
-### Why persist the original file as well as chunks?
-
-Chunks are optimized for retrieval. The original file is still needed for viewing, auditing, reprocessing, and user document management.
-
----
-
-# Known Production Improvements
-
-The current architecture is well suited to a local/demo or smaller deployment. A larger production deployment could extend it with:
-
-- dedicated background job workers such as Celery or RQ
-- Redis or another broker for durable ingestion jobs
-- S3-compatible object storage for original files
-- production reverse proxy and HTTPS
-- stronger secrets management
-- rate limiting
-- monitoring and metrics
-- automated backups
-- malware scanning
-- horizontal model-serving infrastructure / GPUs
-- tuned pgvector indexes for a much larger corpus
-- streaming large document previews rather than base64 transfer
-
----
-
-# Project Summary
-
-The project is more than a chat interface. It is a complete local document intelligence pipeline:
-
-```text
-Authenticated users
-      +
-Persistent document storage
-      +
-Native extraction
-      +
-Selective OCR
-      +
-Context-aware chunking
-      +
-Local embeddings
-      +
-PostgreSQL / pgvector retrieval
-      +
-Conversation-aware RAG
-      +
-Local LLM generation
-      +
-Source transparency
-      +
-Voice transcription
-      +
-Dockerized deployment
+```bash
+ruff format --check .
 ```
 
-The result is a private document assistant that can ingest new knowledge without retraining the language model and can answer questions using evidence retrieved from each user's own document collection.
+Type checking:
+
+```bash
+mypy backend frontend
+```
+
+### RAG evaluation script
+
+`scripts/evaluate_rag.py` runs a small retrieval evaluation dataset and reports whether expected context was retrieved.
+
+That creates an explicit place to evaluate **retrieval quality**, rather than judging the system only by whether the UI returns an answer.
+
+---
+
+# 📁 Repository Structure
+
+```text
+RAG-Document-Assistant/
+├── backend/
+│   ├── app/
+│   │   ├── api/endpoints/        # auth, documents, chat, search, audio, health
+│   │   ├── core/                 # security, logging, exceptions
+│   │   ├── models/               # SQLAlchemy models
+│   │   ├── schemas/              # typed API contracts
+│   │   └── services/             # RAG, OCR, STT, storage, retrieval, LLM
+│   ├── migrations/               # Alembic + pgvector/HNSW migrations
+│   ├── tests/                    # automated test suite
+│   ├── Dockerfile
+│   └── entrypoint.sh
+├── frontend/
+│   ├── app.py                    # Gradio workspace
+│   └── Dockerfile
+├── scripts/
+│   ├── eval_dataset.json
+│   └── evaluate_rag.py
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── AI_PIPELINE.md
+│   ├── LEARNING_NOTES.md
+│   └── TESTING_AND_EVALUATION.md
+├── docker-compose.yml
+├── .env.example
+├── pyproject.toml
+├── uv.lock
+└── README.md
+```
+
+---
+
+# 📚 What I Learned Building It
+
+This project forced me to think about AI systems as **pipelines**, not isolated model calls.
+
+## RAG engineering
+
+I learned how answer quality depends on far more than the LLM:
+
+- extraction quality
+- chunk size
+- chunk overlap
+- context summaries
+- embedding quality
+- vector similarity
+- score thresholds
+- top-k selection
+- prompt grounding
+- conversation context
+
+## OCR
+
+I learned why OCR should be used selectively. Native PDF text is faster and cleaner when available, while scanned pages need a fallback path.
+
+## Vector databases
+
+I worked with embeddings as stored application data, cosine similarity, pgvector operators, relational filters, and HNSW indexing.
+
+## Local AI
+
+Running Ollama locally made model latency, context length, model warmup, CPU constraints, and token limits practical engineering concerns rather than abstract settings.
+
+## Speech-to-text
+
+Adding faster-whisper introduced audio validation, model caching, execution devices, quantized compute, VAD, and latency trade-offs.
+
+## Docker
+
+The project taught me how containers communicate, why persistent volumes matter, how host networking differs from container networking, and how health checks improve multi-service startup.
+
+## Backend architecture
+
+I worked with async FastAPI routes, typed Pydantic schemas, provider abstractions, SQLAlchemy sessions, Alembic migrations, structured logging, and explicit error handling.
+
+## Security
+
+A multi-user RAG application needs more than login screens. Document ownership, conversation ownership, password hashing, signed tokens, upload validation, and user-scoped retrieval all affect whether private data stays private.
+
+## Evaluation
+
+I learned that a RAG system needs retrieval tests and measurable checks — not only “the answer looked good to me.”
+
+---
+
+# 🔍 Deep-Dive Documentation
+
+For implementation details beyond the main README:
+
+- **[System Architecture](docs/ARCHITECTURE.md)**
+- **[AI / RAG Pipeline](docs/AI_PIPELINE.md)**
+- **[Learning Notes](docs/LEARNING_NOTES.md)**
+- **[Testing & Evaluation](docs/TESTING_AND_EVALUATION.md)**
+- **[Verification Notes](extra%20documentation/VERIFICATION.md)**
+
+---
+
+# 🌱 Possible Next Steps
+
+The current system already covers a full local RAG workflow. Natural extensions would include:
+
+- retrieval reranking
+- hybrid keyword + vector search
+- richer evaluation metrics such as MRR / Recall@k
+- document-level summarization
+- metadata-aware filtering
+- GPU-aware transcription/model configuration
+- model/provider selection from the UI
+- background task queues for large ingestion jobs
+- observability dashboards for retrieval and generation latency
+
+---
+
+<div align="center">
+
+## Built to explore how real AI systems fit together
+
+**Documents → OCR → chunks → embeddings → vector search → grounded context → local LLM → cited answers**
+
+</div>
