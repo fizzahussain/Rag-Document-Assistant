@@ -82,4 +82,4 @@ backend/.env
 *.pyc
 storage/
 uploads/
-docs/demo/rag-demo.mp4
+
