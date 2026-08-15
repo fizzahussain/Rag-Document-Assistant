@@ -83,3 +83,4 @@ backend/.env
 storage/
 uploads/
 
+docs/demo/rag-demo.mp4
