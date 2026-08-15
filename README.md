@@ -30,6 +30,18 @@ all through a Dockerized FastAPI + Gradio application.
 </div>
 
 ---
+## 🎥 Demo
+
+<div align="center">
+
+[![RAG Document Assistant demo](docs/images/demo-preview.png)](docs/demo/rag-demo.mp4)
+
+</div>
+
+<p align="center">
+  <em>Click the preview to open the full demo.</em>
+</p>
+
 
 # ✨ Why This Project Is Interesting
 
