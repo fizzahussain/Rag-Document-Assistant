@@ -616,41 +616,6 @@ That creates an explicit place to evaluate **retrieval quality**, rather than ju
 
 ---
 
-# 📁 Repository Structure
-
-```text
-RAG-Document-Assistant/
-├── backend/
-│   ├── app/
-│   │   ├── api/endpoints/        # auth, documents, chat, search, audio, health
-│   │   ├── core/                 # security, logging, exceptions
-│   │   ├── models/               # SQLAlchemy models
-│   │   ├── schemas/              # typed API contracts
-│   │   └── services/             # RAG, OCR, STT, storage, retrieval, LLM
-│   ├── migrations/               # Alembic + pgvector/HNSW migrations
-│   ├── tests/                    # automated test suite
-│   ├── Dockerfile
-│   └── entrypoint.sh
-├── frontend/
-│   ├── app.py                    # Gradio workspace
-│   └── Dockerfile
-├── scripts/
-│   ├── eval_dataset.json
-│   └── evaluate_rag.py
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── AI_PIPELINE.md
-│   ├── LEARNING_NOTES.md
-│   └── TESTING_AND_EVALUATION.md
-├── docker-compose.yml
-├── .env.example
-├── pyproject.toml
-├── uv.lock
-└── README.md
-```
-
----
-
 # 📚 What I Learned Building It
 
 This project forced me to think about AI systems as **pipelines**, not isolated model calls.
