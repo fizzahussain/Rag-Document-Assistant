@@ -4,7 +4,7 @@
 
 ### Local-first document intelligence with RAG, OCR, speech-to-text, vector search, and private LLM inference.
 
-Upload documents, extract native or scanned content, build semantic vectors, ask grounded questions, continue multi-turn conversations, speak queries by voice, and receive traceable answers — through a Dockerized FastAPI + Gradio application.
+Upload documents, extract native or scanned content, build semantic vectors, ask grounded questions, continue multi-turn conversations, speak queries by voice, and receive traceable answers through a Dockerized FastAPI + Gradio application.
 
 <p>
   <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
@@ -36,6 +36,8 @@ A typical RAG demo connects a document loader, vector store, and LLM. This proje
 | 🔐 Security | PBKDF2-SHA256 + salted passwords + bearer tokens + user-scoped retrieval |
 | ⚙️ Backend | Async FastAPI + SQLAlchemy + Alembic + PostgreSQL + SSE streaming |
 | 🐳 Infrastructure | Docker Compose + persistent volumes + health-aware startup + GitHub Actions |
+
+The goal is not just to make a chatbot answer questions, but to build the **complete system around the model**: reliable ingestion, retrieval quality, grounding, traceability, privacy, and reproducible infrastructure.
 
 ---
 
@@ -98,7 +100,7 @@ PDF processing uses a **two-stage extraction strategy**:
 
 1. **PyMuPDF** first extracts native PDF text.
 2. The extracted character count is checked against a configurable threshold.
-3. Pages with weak/empty extraction are rendered for OCR.
+3. Pages with weak or empty extraction are rendered for OCR.
 4. **Tesseract** processes those pages, with a CLI fallback when needed.
 5. The richer result is retained and the extraction source is recorded in metadata.
 
@@ -156,7 +158,7 @@ The application is a **multi-user document workspace**, not a global document po
 - Authenticated document and conversation ownership
 - User-scoped vector retrieval and per-user duplicate checks
 - Persistent multi-turn conversation history
-- Follow-up resolution — e.g. “Explain the third point” can use previous context before retrieval
+- Follow-up resolution, for example, “Explain the third point” can use previous context before retrieval
 - Lightweight intent routing so greetings, thanks, farewells, and calculation-like messages can bypass unnecessary retrieval
 - **Server-Sent Events (SSE)** for progressive response streaming
 - Source-aware results preserving filename, page, chunk index, score, and excerpts
@@ -173,7 +175,7 @@ The authenticated user is applied as a retrieval constraint **before document ch
 
 Ollama handles local embeddings and generation. The Dockerized backend reaches host Ollama through `host.docker.internal:11434`.
 
-The application exposes practical controls for **model keep-alive, startup warmup, context-window size, maximum predicted tokens, timeouts, retrieved-context caps, summary caps, and relevance thresholds** — important when running local models on constrained hardware. A provider abstraction also supports OpenAI for embeddings and/or generation.
+The application exposes practical controls for **model keep-alive, startup warmup, context-window size, maximum predicted tokens, timeouts, retrieved-context caps, summary caps, and relevance thresholds**, which are important when running local models on constrained hardware. A provider abstraction also supports OpenAI for embeddings and/or generation.
 
 ## 🐳 Docker & Infrastructure
 
@@ -216,6 +218,15 @@ Expected context retrieved?
    ↓
 Retrieval evaluation
 ```
+
+## 📚 Further Documentation
+
+The README gives the high-level picture. The repository also includes focused documentation for readers who want to go deeper:
+
+- [🏗️ Architecture](docs/ARCHITECTURE.md) - detailed backend, frontend, database, service, and deployment architecture
+- [🤖 AI Pipeline](docs/AI_PIPELINE.md) - deeper explanation of ingestion, OCR, chunking, embeddings, retrieval, and generation
+- [🧪 Testing & Evaluation](docs/TESTING_AND_EVALUATION.md) - testing strategy, security coverage, E2E workflows, and RAG evaluation
+- [📖 Learning Notes](docs/LEARNING_NOTES.md) - deeper technical notes and concepts explored while building the system
 
 ## 🧰 Technology Stack
 
@@ -323,4 +334,4 @@ RAG-Document-Assistant/
 
 A production-oriented RAG system is more than an LLM call. This project combines **document processing, selective OCR, context-aware chunking, vector search, grounded generation, speech-to-text, authentication, multi-user isolation, async APIs, database migrations, Docker, testing, retrieval evaluation, and CI** into one reproducible application.
 
-The emphasis is on **building the complete system around the model** — not just connecting an LLM to a document upload button.
+The emphasis is on **building the complete system around the model**, not just connecting an LLM to a document upload button.
