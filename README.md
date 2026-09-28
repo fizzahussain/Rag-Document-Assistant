@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🧠 RAG Document Assistant
+# 🧠 INDEX
 
 ### Local-first document intelligence with RAG, OCR, speech-to-text, vector search, and private LLM inference.
 
