@@ -35,6 +35,7 @@ all through a Dockerized FastAPI + Gradio application.
 
 [▶ Watch the RAG Document Assistant demo](https://github.com/user-attachments/assets/1405cbca-9955-4bce-a0ab-7c2c6cd94b9d)
 
+
 # ✨ Why This Project Is Interesting
 
 This project goes well beyond a basic “chat with PDF” demo.
